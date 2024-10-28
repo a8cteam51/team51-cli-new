@@ -183,7 +183,7 @@ final class GitHub_Pattern_To_Repo_Export extends Command {
 	private function prompt_site_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Enter the site ID or URL to extract the pattern from:</question> ' );
 		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			$question->setAutocompleterValues( array_column( get_pressable_sites() ?? array(), 'url' ) );
+			$question->setAutocompleterValues( \array_column( get_pressable_sites( include_aliases: true ) ?? array(), 'url' ) );
 		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );

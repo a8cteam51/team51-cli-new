@@ -262,7 +262,7 @@ final class DeployHQ_Project_Server_Create extends Command {
 	private function prompt_pressable_site_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Enter the domain or numeric Pressable ID of the site to connect the server to:</question> ' );
 		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			$question->setAutocompleterValues( array_column( get_pressable_sites() ?? array(), 'url' ) );
+			$question->setAutocompleterValues( \array_column( get_pressable_sites( include_aliases: true ) ?? array(), 'url' ) );
 		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
