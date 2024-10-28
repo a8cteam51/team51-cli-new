@@ -25,17 +25,34 @@ function get_pressable_collaborators(): ?array {
 /**
  * Returns the list of Pressable sites.
  *
- * @param   array $params An array of parameters to filter the results by.
+ * @param   array   $params          An array of parameters to filter the results by.
+ * @param   boolean $include_aliases Whether to include site aliases in the return value or not.
  *
  * @return  stdClass[]|null
  */
-function get_pressable_sites( array $params = array() ): ?array {
+function get_pressable_sites( array $params = array(), bool $include_aliases = false ): ?array {
+	$GLOBALS['pressable_site_aliases'] ??= array();
+
 	$endpoint = 'sites';
 	if ( ! empty( $params ) ) {
 		$endpoint .= '?' . http_build_query( $params );
 	}
 
-	return API_Helper::make_pressable_request( $endpoint )?->records;
+	$sites = API_Helper::make_pressable_request( $endpoint )?->records;
+	if ( $include_aliases ) {
+		foreach ( $sites ?? array() as $site ) { // Prepare the site aliases.
+
+			if ( str_starts_with( $site->url, 'www' ) ) {
+				$copy      = clone $site;
+				$copy->url = substr( $site->url, 4 ) . ' → ' . $site->url;
+				$sites[]   = $copy;
+
+				$GLOBALS['pressable_site_aliases'][ $copy->url ] = $site->url;
+			}
+		}
+	}
+
+	return $sites;
 }
 
 /**
@@ -46,6 +63,7 @@ function get_pressable_sites( array $params = array() ): ?array {
  * @return  stdClass|null
  */
 function get_pressable_root_site( string $site_id_or_url ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "sites/$site_id_or_url/root" );
 }
 
@@ -59,7 +77,8 @@ function get_pressable_root_site( string $site_id_or_url ): ?stdClass {
  * @return  stdClass[]|null
  */
 function get_pressable_related_sites( string $site_id_or_url, bool $find_root = true, ?callable $node_generator = null ): ?array {
-	$related_sites = API_Helper::make_pressable_request( "sites/$site_id_or_url/related?find_root=$find_root" );
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
+	$related_sites  = API_Helper::make_pressable_request( "sites/$site_id_or_url/related?find_root=$find_root" );
 	if ( ! is_array( $related_sites ) ) {
 		return null;
 	}
@@ -83,6 +102,7 @@ function get_pressable_related_sites( string $site_id_or_url, bool $find_root = 
  * @return  stdClass|null
  */
 function get_pressable_site( string $site_id_or_url ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	$site_id_or_url = is_numeric( $site_id_or_url ) ? (string) $site_id_or_url : urlencode( $site_id_or_url );
 	return API_Helper::make_pressable_request( "sites/$site_id_or_url" );
 }
@@ -95,6 +115,7 @@ function get_pressable_site( string $site_id_or_url ): ?stdClass {
  * @return  stdClass|null
  */
 function convert_pressable_site( string $site_id_or_url ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "sites/$site_id_or_url/convert", 'POST' );
 }
 
@@ -107,7 +128,8 @@ function convert_pressable_site( string $site_id_or_url ): ?stdClass {
  * @return  stdClass[]|null
  */
 function get_pressable_site_notes( string $site_id_or_url, array $params = array() ): ?array {
-	$endpoint = "site-notes/$site_id_or_url";
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
+	$endpoint       = "site-notes/$site_id_or_url";
 	if ( ! empty( $params ) ) {
 		$endpoint .= '?' . http_build_query( $params );
 	}
@@ -125,6 +147,7 @@ function get_pressable_site_notes( string $site_id_or_url, array $params = array
  * @return  stdClass|null
  */
 function create_pressable_site_note( string $site_id_or_url, string $subject, string $content ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request(
 		"site-notes/$site_id_or_url",
 		'POST',
@@ -143,7 +166,8 @@ function create_pressable_site_note( string $site_id_or_url, string $subject, st
  * @return  stdClass|null
  */
 function get_pressable_site_deployhq_config( string $site_id_or_url ): ?stdClass {
-	$config = API_Helper::make_pressable_request( "sites/$site_id_or_url/deployhq" );
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
+	$config         = API_Helper::make_pressable_request( "sites/$site_id_or_url/deployhq" );
 	if ( is_null( $config ) ) {
 		return null;
 	}
@@ -164,6 +188,7 @@ function get_pressable_site_deployhq_config( string $site_id_or_url ): ?stdClass
  * @return  stdClass|null
  */
 function update_pressable_site_deployhq_project( string $site_id_or_url, string $project ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "sites/$site_id_or_url/deployhq", 'POST', array( 'project' => $project ) );
 }
 
@@ -177,6 +202,7 @@ function update_pressable_site_deployhq_project( string $site_id_or_url, string 
  * @return  stdClass|null
  */
 function update_pressable_site_deployhq_server( string $site_id_or_url, string $project, string $server ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request(
 		"sites/$site_id_or_url/deployhq",
 		'POST',
@@ -196,6 +222,7 @@ function update_pressable_site_deployhq_server( string $site_id_or_url, string $
  * @return  stdClass|null
  */
 function create_pressable_site_collaborator( string $site_id_or_url, string $collaborator_email ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-collaborators/$site_id_or_url", 'POST', array( 'email' => $collaborator_email ) );
 }
 
@@ -207,6 +234,7 @@ function create_pressable_site_collaborator( string $site_id_or_url, string $col
  * @return  stdClass[]|null
  */
 function get_pressable_site_sftp_users( string $site_id_or_url ): ?array {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-sftp-users/$site_id_or_url" )?->records;
 }
 
@@ -218,6 +246,7 @@ function get_pressable_site_sftp_users( string $site_id_or_url ): ?array {
  * @return  stdClass[]|null
  */
 function get_pressable_site_domains( string $site_id_or_url ): ?array {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-domains/$site_id_or_url" )?->records;
 }
 
@@ -244,6 +273,7 @@ function get_pressable_site_primary_domain( string $site_id_or_url ): ?stdClass 
  * @return  stdClass|null
  */
 function set_pressable_site_primary_domain( string $site_id_or_url, string $domain_id ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-domains/$site_id_or_url/$domain_id", 'PUT' );
 }
 
@@ -256,6 +286,7 @@ function set_pressable_site_primary_domain( string $site_id_or_url, string $doma
  * @return  stdClass[]|null
  */
 function add_pressable_site_domain( string $site_id_or_url, string $domain ): ?array {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-domains/$site_id_or_url", 'POST', array( 'name' => $domain ) )?->records;
 }
 
@@ -267,6 +298,7 @@ function add_pressable_site_domain( string $site_id_or_url, string $domain ): ?a
  * @return  stdClass|null
  */
 function get_pressable_site_sftp_owner( string $site_id_or_url ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-sftp-users/$site_id_or_url/owner" );
 }
 
@@ -279,6 +311,7 @@ function get_pressable_site_sftp_owner( string $site_id_or_url ): ?stdClass {
  * @return  object|null
  */
 function get_pressable_site_sftp_user( string $site_id_or_url, string $uname_or_email_or_id ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-sftp-users/$site_id_or_url/$uname_or_email_or_id" );
 }
 
@@ -291,6 +324,7 @@ function get_pressable_site_sftp_user( string $site_id_or_url, string $uname_or_
  * @return  stdClass|null
  */
 function rotate_pressable_site_sftp_user_password( string $site_id_or_url, string $username ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-sftp-users/$site_id_or_url/$username/rotate-password", 'POST' );
 }
 
@@ -302,6 +336,7 @@ function rotate_pressable_site_sftp_user_password( string $site_id_or_url, strin
  * @return  stdClass[]|null
  */
 function get_pressable_site_wp_users( string $site_id_or_url ): ?array {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-wp-users/$site_id_or_url" )?->records;
 }
 
@@ -314,6 +349,7 @@ function get_pressable_site_wp_users( string $site_id_or_url ): ?array {
  * @return  object|null
  */
 function get_pressable_site_wp_user( string $site_id_or_url, string $user ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-wp-users/$site_id_or_url/$user" );
 }
 
@@ -326,7 +362,8 @@ function get_pressable_site_wp_user( string $site_id_or_url, string $user ): ?st
  * @return  stdClass|null
  */
 function rotate_pressable_site_wp_user_password( string $site_id_or_url, string $user ): ?stdClass {
-	$credentials = API_Helper::make_pressable_request( "site-wp-users/$site_id_or_url/$user/rotate-password", 'POST' );
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
+	$credentials    = API_Helper::make_pressable_request( "site-wp-users/$site_id_or_url/$user/rotate-password", 'POST' );
 	if ( is_null( $credentials ) || is_null( $credentials->password ) ) {
 		$exit_code = run_pressable_site_wp_cli_command( $site_id_or_url, "user reset-password $user --skip-email --porcelain" );
 		if ( Command::SUCCESS === $exit_code ) {
@@ -373,6 +410,7 @@ function get_pressable_datacenters(): ?array {
  * @return  true|null
  */
 function delete_pressable_site_collaborator( string $site_id_or_url, string $collaborator, bool $delete_wp_user = false ): true|null {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request( "site-collaborators/$site_id_or_url/$collaborator", 'DELETE', array( 'delete_wp_user' => $delete_wp_user ) );
 }
 
@@ -406,6 +444,7 @@ function create_pressable_site( string $name, string $datacenter ): ?stdClass {
  * @return  stdClass|null
  */
 function create_pressable_site_clone( string $site_id_or_url, string $name, ?string $datacenter = null, bool $staging = true ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	return API_Helper::make_pressable_request(
 		'sites',
 		'POST',
@@ -428,6 +467,7 @@ function create_pressable_site_clone( string $site_id_or_url, string $name, ?str
  * @return  stdClass|null
  */
 function wait_on_pressable_site_state( string $site_id_or_url, string $state, OutputInterface $output ): ?stdClass {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	$output->writeln( "<comment>Waiting for Pressable site $site_id_or_url to exit $state state.</comment>" );
 
 	$progress_bar = new ProgressBar( $output );
@@ -458,6 +498,7 @@ function wait_on_pressable_site_state( string $site_id_or_url, string $state, Ou
  * @return  SSH2|null
  */
 function wait_on_pressable_site_ssh( string $site_id_or_url, OutputInterface $output ): ?SSH2 {
+	$site_id_or_url = pressable_maybe_resolve_site_alias( $site_id_or_url );
 	$output->writeln( "<comment>Waiting for Pressable site $site_id_or_url to accept SSH connections.</comment>" );
 
 	$progress_bar = new ProgressBar( $output );
@@ -721,6 +762,17 @@ function get_pressable_site_php_logs( string $site_id, ?string $status = null, i
 	} while ( ! $page->paging->is_last_page && 0 < $max_entries );
 
 	return array_merge( ...$logs );
+}
+
+/**
+ * If given a site alias, resolve it to the actual site name.
+ *
+ * @param   string $site_id_or_url The ID, URL, or alias of the site.
+ *
+ * @return  string
+ */
+function pressable_maybe_resolve_site_alias( string $site_id_or_url ): string {
+	return $GLOBALS['pressable_site_aliases'][ $site_id_or_url ] ?? $site_id_or_url;
 }
 
 // endregion

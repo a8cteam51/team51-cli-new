@@ -300,7 +300,7 @@ final class Pressable_Site_Clone extends Command {
 	private function prompt_site_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Enter the domain or Pressable site ID to clone:</question> ' );
 		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			$question->setAutocompleterValues( \array_column( get_pressable_sites() ?? array(), 'url' ) );
+			$question->setAutocompleterValues( \array_column( get_pressable_sites( include_aliases: true ) ?? array(), 'url' ) );
 		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
