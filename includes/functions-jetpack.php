@@ -57,7 +57,7 @@ function get_jetpack_site_modules( string $site_id_or_url ): ?array {
  *
  * @return  stdClass[][]|null
  */
-function get_jetpack_site_modules_batch( array $site_ids_or_urls, array &$errors = null ): ?array {
+function get_jetpack_site_modules_batch( array $site_ids_or_urls, ?array &$errors = null ): ?array {
 	$sites_module_list = API_Helper::make_jetpack_request( 'modules/batch', 'POST', array( 'sites' => $site_ids_or_urls ) );
 	if ( is_null( $sites_module_list ) ) {
 		return null;

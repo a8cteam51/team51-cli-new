@@ -86,7 +86,7 @@ function parse_http_headers( array $http_response_header ): array {
  *
  * @return  array
  */
-function parse_batch_response( stdClass $responses, array &$errors = null ): array {
+function parse_batch_response( stdClass $responses, ?array &$errors = null ): array {
 	$errors = array_filter( (array) $responses, static fn( $response ) => is_object( $response ) && property_exists( $response, 'errors' ) );
 	return array_filter( (array) $responses, static fn( $response ) => ! is_object( $response ) || ! property_exists( $response, 'errors' ) );
 }

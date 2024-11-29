@@ -101,7 +101,7 @@ function get_wpcom_site_transfer_status( string $site_id_or_url ): ?stdClass {
  *
  * @return  stdClass[]|null
  */
-function get_wpcom_site_batch( array $site_ids_or_urls, array &$errors = null ): ?array {
+function get_wpcom_site_batch( array $site_ids_or_urls, ?array &$errors = null ): ?array {
 	$sites = API_Helper::make_wpcom_request( 'sites/batch', 'POST', array( 'sites' => $site_ids_or_urls ) );
 	return is_null( $sites ) ? null : parse_batch_response( $sites, $errors );
 }
@@ -136,7 +136,7 @@ function get_wpcom_site_plugins( string $site_id_or_domain ): ?array {
  *
  * @return  stdClass[][]|null
  */
-function get_wpcom_site_plugins_batch( array $site_ids_or_urls, array &$errors = null ): ?array {
+function get_wpcom_site_plugins_batch( array $site_ids_or_urls, ?array &$errors = null ): ?array {
 	$sites_plugins = API_Helper::make_wpcom_request( 'sites/batch/plugins', 'POST', array( 'sites' => $site_ids_or_urls ) );
 	if ( is_null( $sites_plugins ) ) {
 		return null;
@@ -180,7 +180,7 @@ function get_wpcom_site_stats( string $site_id_or_url, ?array $query_params = nu
  *
  * @return  stdClass[]|null
  */
-function get_wpcom_site_stats_batch( array $site_ids_or_urls, array $query_params = array(), ?string $type = null, array &$errors = null ): ?array {
+function get_wpcom_site_stats_batch( array $site_ids_or_urls, array $query_params = array(), ?string $type = null, ?array &$errors = null ): ?array {
 	$sites_stats = API_Helper::make_wpcom_request(
 		'site-stats/batch',
 		'POST',
@@ -227,7 +227,7 @@ function get_wpcom_site_users( string $site_id_or_url, array $params = array() )
  *
  * @return  stdClass[]|null
  */
-function get_wpcom_site_users_batch( array $site_ids_or_urls, array $params = array(), array &$errors = null ): ?array {
+function get_wpcom_site_users_batch( array $site_ids_or_urls, array $params = array(), ?array &$errors = null ): ?array {
 	$sites_users = API_Helper::make_wpcom_request(
 		'site-users/batch',
 		'POST',
