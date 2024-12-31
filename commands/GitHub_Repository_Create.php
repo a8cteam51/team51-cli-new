@@ -2,12 +2,14 @@
 
 namespace WPCOMSpecialProjects\CLI\Command;
 
+use stdClass;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ChoiceQuestion;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
 use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
@@ -50,6 +52,20 @@ final class GitHub_Repository_Create extends Command {
 	private ?string $type = null;
 
 	/**
+	 * The name of the theme to use for the no-code repository.
+	 *
+	 * @var string|null
+	 */
+	private ?string $no_code_theme = null;
+
+	/**
+	 * The directory containing the a8c themes.
+	 *
+	 * @var string|null
+	 */
+	private ?string $a8c_themes_dir = null;
+
+	/**
 	 * The custom properties to set for the repository.
 	 *
 	 * @var array|null
@@ -70,7 +86,7 @@ final class GitHub_Repository_Create extends Command {
 		$this->addArgument( 'name', InputArgument::REQUIRED, 'The name of the repository to create.' )
 			->addOption( 'homepage', null, InputOption::VALUE_REQUIRED, 'A URL with more information about the repository.' )
 			->addOption( 'description', null, InputOption::VALUE_REQUIRED, 'A short, human-friendly description for this project.' )
-			->addOption( 'type', null, InputOption::VALUE_REQUIRED, 'The name of the template repository to use, if any. One of either `project`, `plugin`, or `issues`. Default empty repo.' );
+			->addOption( 'type', null, InputOption::VALUE_REQUIRED, 'The name of the template repository to use, if any. One of either `project`, `no-code-project`, `plugin`, or `issues`. Default empty repo.' );
 
 		$this->addOption( 'custom-properties', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'The custom properties to set for the repository.' );
 	}
@@ -82,10 +98,11 @@ final class GitHub_Repository_Create extends Command {
 		$this->name = slugify( get_string_input( $input, 'name', fn() => $this->prompt_name_input( $input, $output ) ) );
 		$input->setArgument( 'name', $this->name );
 
-		$this->homepage    = $input->getOption( 'homepage' );
-		$this->description = $input->getOption( 'description' );
+		$this->homepage       = $input->getOption( 'homepage' );
+		$this->description    = $input->getOption( 'description' );
+		$this->a8c_themes_dir = dirname( getcwd() ) . '/a8c-themes';
 
-		$this->type = get_enum_input( $input, 'type', array( 'project', 'plugin', 'issues' ), fn() => $this->prompt_type_input( $input, $output ) );
+		$this->type = get_enum_input( $input, 'type', array( 'project', 'no-code-project', 'plugin', 'issues' ), fn() => $this->prompt_type_input( $input, $output ) );
 		$input->setOption( 'type', $this->type );
 
 		$this->custom_properties = $this->process_custom_properties( $input );
@@ -102,6 +119,10 @@ final class GitHub_Repository_Create extends Command {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
 		}
+
+		if ( 'no-code-project' === $this->type ) {
+			$this->setup_no_code_theme( $input, $output );
+		}
 	}
 
 	/**
@@ -113,6 +134,7 @@ final class GitHub_Repository_Create extends Command {
 
 		// Create the repository.
 		$repository = create_github_repository( $this->name, $this->type, $this->homepage, $this->description, $this->custom_properties );
+
 		if ( \is_null( $repository ) ) {
 			$output->writeln( '<error>Failed to create the repository.</error>' );
 			return Command::FAILURE;
@@ -123,6 +145,15 @@ final class GitHub_Repository_Create extends Command {
 			set_github_repository_topics( $repository->name, array( "team51-$this->type" ) );
 		} else {
 			set_github_repository_topics( $repository->name, array( 'team51-empty' ) );
+		}
+
+		// Add theme files for no-code-project repositories
+		if ( 'no-code-project' === $this->type && ! empty( $this->no_code_theme ) ) {
+			$result = $this->add_no_code_theme_files( $output, $repository );
+			if ( false === $result ) {
+				$output->writeln( '<error>Failed to add theme files.</error>' );
+				return Command::FAILURE;
+			}
 		}
 
 		$output->writeln( "<fg=green;options=bold>Repository $this->name created successfully.</>" );
@@ -157,7 +188,7 @@ final class GitHub_Repository_Create extends Command {
 	private function prompt_type_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Please enter the type of repository to create or press enter for an empty repo:</question> ' );
 		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			$question->setAutocompleterValues( array( 'project', 'plugin', 'issues' ) );
+			$question->setAutocompleterValues( array( 'project', 'no-code-project', 'plugin', 'issues' ) );
 		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
@@ -193,6 +224,130 @@ final class GitHub_Repository_Create extends Command {
 		}
 
 		return $custom_properties;
+	}
+
+	/**
+	 * Sets up the no-code theme by cloning/pulling the a8c-themes repo and prompting for theme selection.
+	 *
+	 * @param InputInterface  $input  The input interface.
+	 * @param OutputInterface $output The output interface.
+	 */
+	private function setup_no_code_theme( InputInterface $input, OutputInterface $output ): void {
+		$output->writeln( '<comment>Fetching a8c themes in the parent directory of the Team51 CLI...</comment>' );
+
+		if ( ! is_dir( $this->a8c_themes_dir ) ) {
+			$command     = sprintf(
+				'cd %s && git clone git@github.com:Automattic/themes.git a8c-themes',
+				dirname( getcwd() )
+			);
+			$exec_output = array();
+			exec( $command, $exec_output, $return_code );
+			if ( 0 !== $return_code ) {
+				$output->writeln( '<error>Failed to clone a8c-themes repository.</error>' );
+				exit( 1 );
+			}
+		} else {
+			$command     = sprintf(
+				'cd %s && git pull',
+				$this->a8c_themes_dir
+			);
+			$exec_output = array();
+			exec( $command, $exec_output, $return_code );
+			if ( 0 !== $return_code ) {
+				$output->writeln( '<error>Failed to pull latest changes from a8c-themes repository.</error>' );
+				exit( 1 );
+			}
+		}
+
+		// Get list of main folders in the repo
+		$folders = array_filter(
+			scandir( $this->a8c_themes_dir ),
+			function ( $item ) {
+				return is_dir( $this->a8c_themes_dir . '/' . $item ) && ! in_array( $item, array( '.', '..', '.git' ), true );
+			}
+		);
+
+		$question            = new ChoiceQuestion(
+			'<question>Please select the no-code theme to use:</question> ',
+			$folders,
+			0
+		);
+		$this->no_code_theme = $this->getHelper( 'question' )->ask( $input, $output, $question );
+	}
+
+	/**
+	 * Adds the no-code theme files to the repository.
+	 *
+	 * @param   OutputInterface $output     The output interface.
+	 * @param   stdClass        $repository The repository object.
+	 *
+	 * @return  boolean
+	 */
+	private function add_no_code_theme_files( OutputInterface $output, stdClass $repository ): bool {
+		$output->writeln( "<comment>Adding theme files from {$this->no_code_theme}...</comment>" );
+
+		// Create a temporary directory
+		$temp_dir = sys_get_temp_dir() . '/' . uniqid( 'github-repo-' );
+		mkdir( $temp_dir );
+		if ( ! is_dir( $temp_dir ) ) {
+			$output->writeln( '<error>Failed to create temporary directory.</error>' );
+			return false;
+		}
+
+		// Clone the new repository
+		$clone_command = sprintf(
+			'git clone %s %s',
+			$repository->ssh_url,
+			$temp_dir
+		);
+		exec( $clone_command, $exec_output, $return_code );
+		if ( 0 !== $return_code ) {
+			$output->writeln( '<error>Failed to clone the new repository.</error>' );
+			$output->writeln( '<error>Command output: ' . implode( "\n", $exec_output ) . '</error>' );
+			return false;
+		}
+
+		// Create themes directory and copy theme files
+		$copy_command = sprintf(
+			'cd %s && mkdir -p themes/%s && cp -r %s/%s/* themes/%s',
+			$temp_dir,
+			$this->name,
+			$this->a8c_themes_dir,
+			$this->no_code_theme,
+			$this->name
+		);
+		exec( $copy_command, $exec_output, $return_code );
+		if ( 0 !== $return_code ) {
+			$output->writeln( '<error>Failed to copy theme files.</error>' );
+			$output->writeln( '<error>Command output: ' . implode( "\n", $exec_output ) . '</error>' );
+			return false;
+		}
+
+		// Commit and push the theme files
+		$git_commands = array(
+			sprintf( 'cd %s', $temp_dir ),
+			'git add .',
+			'git commit -m "Add theme files"',
+			'git push origin trunk',
+		);
+
+		exec( implode( ' && ', $git_commands ), $exec_output, $return_code );
+		if ( 0 !== $return_code ) {
+			$output->writeln( '<error>Failed to push theme files.</error>' );
+			$output->writeln( '<error>Command output: ' . implode( "\n", $exec_output ) . '</error>' );
+			return false;
+		}
+
+		// Clean up temporary directory
+		exec( sprintf( 'rm -rf %s', $temp_dir ), $exec_output, $return_code );
+		if ( 0 !== $return_code ) {
+			$output->writeln( '<error>Failed to clean up temporary directory.</error>' );
+			$output->writeln( '<error>Command output: ' . implode( "\n", $exec_output ) . '</error>' );
+			return false;
+		}
+
+		$output->writeln( '<fg=green>Theme files added and pushed successfully.</>' );
+		return true;
 	}
 
 	// endregion
