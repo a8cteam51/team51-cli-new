@@ -27,40 +27,40 @@ final class GitHub_Launch_Checklist_Add extends Command {
 	 * @var array
 	 */
 	private const CONDITIONAL_TAGS = array(
-		'a8c' => array(
-			'question' => 'Is this an a8c property or product website?',
+		'a8c'                          => array(
+			'question'    => 'Is this an a8c property or product website?',
 			'description' => 'This site is an a8c property or product website.',
 		),
-		'migrate-pressable-dns' => array(
-			'question' => 'Will the site DNS be migrated to Pressable?',
+		'migrate-pressable-dns'        => array(
+			'question'    => 'Will the site DNS be migrated to Pressable?',
 			'description' => 'The site DNS will be migrated to Pressable.',
 		),
-		'partner-pays-wpcom' => array(
-			'question' => 'Will the partner be paying WordPress.com for hosting?',
+		'partner-pays-wpcom'           => array(
+			'question'    => 'Will the partner be paying WordPress.com for hosting?',
 			'description' => 'The partner will be paying WordPress.com for hosting.',
 		),
-		'retain-jetpack-likes' => array(
-			'question' => 'Will Jetpack likes need to be retained during migration?',
+		'retain-jetpack-likes'         => array(
+			'question'    => 'Will Jetpack likes need to be retained during migration?',
 			'description' => 'Jetpack likes will need to be retained during migration.',
 		),
-		'sensei' => array(
-			'question' => 'Does the site have Sensei installed?',
+		'sensei'                       => array(
+			'question'    => 'Does the site have Sensei installed?',
 			'description' => 'The site has Sensei installed.',
 		),
-		'videopress' => array(
-			'question' => 'Does the site use VideoPress?',
+		'videopress'                   => array(
+			'question'    => 'Does the site use VideoPress?',
 			'description' => 'The site uses VideoPress.',
 		),
-		'woocommerce' => array(
-			'question' => 'Does the site have WooCommerce installed?',
+		'woocommerce'                  => array(
+			'question'    => 'Does the site have WooCommerce installed?',
 			'description' => 'The site has WooCommerce installed.',
 		),
 		'wpcom-to-pressable-migration' => array(
-			'question' => 'Is the site migrating from WordPress.com (Simple or VIP) to Pressable?',
+			'question'    => 'Is the site migrating from WordPress.com (Simple or VIP) to Pressable?',
 			'description' => 'The site is migrating from WordPress.com (Simple or VIP) to Pressable.',
 		),
-		'yoast' => array(
-			'question' => 'Does the site have Yoast installed?',
+		'yoast'                        => array(
+			'question'    => 'Does the site have Yoast installed?',
 			'description' => 'The site has Yoast installed.',
 		),
 	);
@@ -91,6 +91,13 @@ final class GitHub_Launch_Checklist_Add extends Command {
 	protected ?string $host = null;
 
 	/**
+	 * The conditional tags.
+	 *
+	 * @var array
+	 */
+	protected array $conditional_tags = array();
+
+	/**
 	 * {@inheritDoc}
 	 */
 	protected function configure() {
@@ -101,6 +108,7 @@ final class GitHub_Launch_Checklist_Add extends Command {
 			->addArgument( 'host', InputArgument::REQUIRED, sprintf( 'The hosting platform of the site. (%s)', implode( ', ', array_keys( self::HOSTS ) ), 'pressable', array_keys( self::HOSTS ) ) );
 
 		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
+			print( "{$tag}: {$details['description']}\n" );
 			$this->addOption( $tag, null, InputOption::VALUE_NONE, $details['description'] );
 		}
 	}
@@ -115,6 +123,12 @@ final class GitHub_Launch_Checklist_Add extends Command {
 
 		$this->host = get_enum_input( $input, 'host', array_keys( self::HOSTS ), fn() => $this->prompt_host_input( $input, $output ) );
 		$input->setArgument( 'host', $this->host );
+
+		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
+			$output->writeln( "<comment>{$tag}: {$details['question']}</comment>", Output::VERBOSITY_VERBOSE );
+			$this->conditional_tags[ $tag ] = get_bool_input( $input, $tag );
+			$input->setOption( $tag, $this->conditional_tags[ $tag ] );
+		}
 	}
 
 	/**
@@ -278,73 +292,5 @@ final class GitHub_Launch_Checklist_Add extends Command {
 		$question = new ChoiceQuestion( '<question>Please select the site host [pressable]:</question> ', self::HOSTS, 'pressable' );
 		$question->setValidator( fn( $value ) => validate_user_choice( $value, self::HOSTS ) );
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
-	}
-
-	/**
-	 * Prompts the user for a pattern name in interactive mode.
-	 *
-	 * @param InputInterface  $input  The input object.
-	 * @param OutputInterface $output The output object.
-	 *
-	 * @return string|null
-	 */
-	private function prompt_pattern_name_input( InputInterface $input, OutputInterface $output ): ?string {
-
-		// Ask for the pattern name, providing an example as a hint.
-		$question_text = '<question>Enter the pattern name (e.g., "twentytwentyfour/banner-hero"):</question> ';
-		$question      = new Question( $question_text );
-
-		// Retrieve the user's input.
-		return $this->getHelper( 'question' )->ask( $input, $output, $question );
-	}
-
-	/**
-	 * Prompts the user for a category slug in interactive mode.
-	 *
-	 * @param   InputInterface  $input  The input object.
-	 * @param   OutputInterface $output The output object.
-	 *
-	 * @return  string|null
-	 */
-	private function prompt_category_slug_input( InputInterface $input, OutputInterface $output ): ?string {
-			// Provide guidance on the expected format for the category slug.
-			$question = new Question( '<question>Enter the category slug (lowercase, hyphens for spaces, e.g., "hero"):</question> ' );
-
-			// Ask the question and retrieve the user's input.
-			$category_slug = $this->getHelper( 'question' )->ask( $input, $output, $question );
-
-			return $category_slug;
-	}
-
-	/**
-	 * Downloads an image from a URL and returns its dimensions and extension.
-	 *
-	 * @param string $image_url The URL of the image to download.
-	 *
-	 * @return array
-	 */
-	private function get_image_details( $image_url ) {
-		// Download the image
-		$image_data = file_get_contents( $image_url );
-		if ( false === $image_data ) {
-			throw new Exception( "Failed to download image from URL: $image_url" );
-		}
-
-		// Determine the image size
-		$image_size = getimagesizefromstring( $image_data );
-		if ( false === $image_size ) {
-			throw new Exception( "Failed to determine the size of the image from URL: $image_url" );
-		}
-
-		// Determine the image extension
-		$extension = image_type_to_extension( $image_size[2], false );
-
-		return array(
-			'data'      => $image_data,
-			'width'     => $image_size[0],
-			'height'    => $image_size[1],
-			'mime_type' => $image_size['mime'],
-			'extension' => $extension,
-		);
 	}
 }
