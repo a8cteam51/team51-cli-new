@@ -9,7 +9,9 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\Output;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
+use Symfony\Component\Console\Question\ChoiceQuestion;
 use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
 
 /**
@@ -75,11 +77,18 @@ final class GitHub_Launch_Checklist_Add extends Command {
 	);
 
 	/**
-	 * The slug of the repository to add the checklist to.
+	 * The repository to add the checklist to.
+	 *
+	 * @var \stdClass|null
+	 */
+	private ?\stdClass $gh_repository = null;
+
+	/**
+	 * The host of the site.
 	 *
 	 * @var string|null
 	 */
-	protected ?string $repo_slug = null;
+	protected ?string $host = null;
 
 	/**
 	 * {@inheritDoc}
@@ -89,7 +98,7 @@ final class GitHub_Launch_Checklist_Add extends Command {
 			->setDescription( 'Adds a checklist to a GitHub repository.' )
 			->setHelp( 'This command adds a checklist to a GitHub repository.' )
 			->addArgument( 'repository', InputArgument::REQUIRED, 'The slug of the repository to add the checklist to.' )
-			->addOption( 'host', null, InputOption::VALUE_REQUIRED, sprintf( 'The hosting platform of the site. (%s)', implode( ', ', array_keys( self::HOSTS ) ), 'pressable', array_keys( self::HOSTS ) ) );
+			->addArgument( 'host', InputArgument::REQUIRED, sprintf( 'The hosting platform of the site. (%s)', implode( ', ', array_keys( self::HOSTS ) ), 'pressable', array_keys( self::HOSTS ) ) );
 
 		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
 			$this->addOption( $tag, null, InputOption::VALUE_NONE, $details['description'] );
@@ -100,13 +109,23 @@ final class GitHub_Launch_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
-		// Retrieve the repository slug.
-		$this->repository = get_github_repository_input( $input, fn() => $this->prompt_repository_input( $input, $output ) );
-		$input->setArgument( 'repository', $this->repository );
+		// Retrieve the repository.
+		$this->gh_repository = get_github_repository_input( $input, fn() => $this->prompt_repository_input( $input, $output ) );
+		$input->setArgument( 'repository', $this->gh_repository );
 
-		// Retrieve the checklist slug.
-		// $this->checklist = get_string_input( $input, 'checklist', fn() => $this->prompt_checklist_input( $input, $output ) );
-		// $output->writeln( "<comment>Checklist: " . print_r( $this->checklist, true ) . "</comment>", Output::VERBOSITY_VERBOSE );
+		$this->host = get_enum_input( $input, 'host', array_keys( self::HOSTS ), fn() => $this->prompt_host_input( $input, $output ) );
+		$input->setArgument( 'host', $this->host );
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	protected function interact( InputInterface $input, OutputInterface $output ): void {
+		$question = new ConfirmationQuestion( "<question>Are you sure you want to connect the WPCOM site `{$this->site->name}` (ID {$this->site->ID}, URL {$this->site->URL}) to the GitHub repository `{$this->gh_repository->full_name}`? [y/N]</question> ", false );
+		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
+			$output->writeln( '<comment>Command aborted by user.</comment>' );
+			exit( 2 );
+		}
 	}
 
 	/**
@@ -231,19 +250,33 @@ final class GitHub_Launch_Checklist_Add extends Command {
 	}
 
 	/**
-	 * Prompts the user for a GitHub repository slug.
+	 * Prompts the user to input a repository.
+	 *
+	 * @param   InputInterface  $input  The input interface.
+	 * @param   OutputInterface $output The output interface.
+	 *
+	 * @return  string
+	 */
+	private function prompt_repository_input( InputInterface $input, OutputInterface $output ): string {
+		$question = new Question( '<question>Please enter the slug of the GitHub repository to add the checklist to:</question> ' );
+		if ( ! $input->getOption( 'no-autocomplete' ) ) {
+			$question->setAutocompleterValues( array_column( get_github_repositories() ?? array(), 'name' ) );
+		}
+
+		return $this->getHelper( 'question' )->ask( $input, $output, $question );
+	}
+
+	/**
+	 * Prompts the user for a host.
 	 *
 	 * @param   InputInterface  $input  The input object.
 	 * @param   OutputInterface $output The output object.
 	 *
 	 * @return  string|null
 	 */
-	private function prompt_repository_input( InputInterface $input, OutputInterface $output ): ?string {
-		$question = new Question( '<question>Please enter the slug of the GitHub repository to add the checklist to:</question> ' );
-		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			$question->setAutocompleterValues( array_column( get_github_repositories() ?? array(), 'name' ) );
-		}
-
+	private function prompt_host_input( InputInterface $input, OutputInterface $output ): ?string {
+		$question = new ChoiceQuestion( '<question>Please select the site host [pressable]:</question> ', self::HOSTS, 'pressable' );
+		$question->setValidator( fn( $value ) => validate_user_choice( $value, self::HOSTS ) );
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
 	}
 
