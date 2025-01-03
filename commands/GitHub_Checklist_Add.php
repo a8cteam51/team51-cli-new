@@ -17,9 +17,20 @@ use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
 /**
  * Adds a launch checklist to a GitHub repository.
  */
-#[AsCommand( name: 'github:add-launch-checklist' )]
-final class GitHub_Launch_Checklist_Add extends Command {
+#[AsCommand( name: 'github:add-checklist' )]
+final class GitHub_Checklist_Add extends Command {
 	use AutocompleteTrait;
+
+	/**
+	 * Checklists that can be created.
+	 *
+	 * @var array
+	 */
+	private const CHECKLISTS = array(
+		'launch' => 'Launch',
+		'migrate-pressable-dns' => 'DNS Migration to Pressable',
+		'qa-engineer' => 'QA Engineer',
+	);
 
 	/**
 	 * Conditional tags used for optional sections in the checklist.
@@ -104,6 +115,7 @@ final class GitHub_Launch_Checklist_Add extends Command {
 		$this
 			->setDescription( 'Adds a checklist to a GitHub repository.' )
 			->setHelp( 'This command adds a checklist to a GitHub repository.' )
+			->addArgument( 'checklist', InputArgument::REQUIRED, sprintf( 'The checklist to add. (%s)', implode( ', ', array_keys( self::CHECKLISTS ) ), 'launch', array_keys( self::CHECKLISTS ) ) )
 			->addArgument( 'repository', InputArgument::REQUIRED, 'The slug of the repository to add the checklist to.' )
 			->addArgument( 'host', InputArgument::REQUIRED, sprintf( 'The hosting platform of the site. (%s)', implode( ', ', array_keys( self::HOSTS ) ), 'pressable', array_keys( self::HOSTS ) ) );
 
