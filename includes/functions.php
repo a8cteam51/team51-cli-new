@@ -321,7 +321,6 @@ function get_enum_input( InputInterface $input, string $name, array $valid_value
  * @return  boolean
  */
 function get_bool_input( InputInterface $input, string $name ): bool {
-	print_r( $input->getOptions() );
 	$option = $input->hasOption( $name ) ? $input->getOption( $name ) : $input->getArgument( $name );
 	return filter_var( $option, FILTER_VALIDATE_BOOLEAN );
 }
