@@ -22,6 +22,13 @@ final class GitHub_Checklist_Add extends Command {
 	use AutocompleteTrait;
 
 	/**
+	 * The checklists repository.
+	 *
+	 * @var string
+	 */
+	private const CHECKLISTS_REPOSITORY_URL = 'git@github.com:a8cteam51/special-projects-checklists.git';
+
+	/**
 	 * Checklists that can be created.
 	 *
 	 * @var array
@@ -95,6 +102,13 @@ final class GitHub_Checklist_Add extends Command {
 	private ?string $checklist = null;
 
 	/**
+	 * The checklist contents.
+	 *
+	 * @var string
+	 */
+	private ?string $checklist_text = null;
+
+	/**
 	 * The repository to add the checklist to.
 	 *
 	 * @var \stdClass|null
@@ -152,12 +166,17 @@ final class GitHub_Checklist_Add extends Command {
 		$this->host = get_enum_input( $input, 'host', array_keys( self::HOSTS ), fn() => $this->prompt_host_input( $input, $output ) );
 		$input->setArgument( 'host', $this->host );
 
+		// Check the conditional tags that are in the actual checklist on the repository.
+		$this->checklist_text = $this->get_checklist( $this->checklist, $output );
+
 		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
 			if ( $has_args ) {
 				$this->conditional_tags[ $tag ] = get_bool_input( $input, $tag );
-			} else {
+			} elseif ( str_contains( $this->checklist_text, '[' . $tag . ']' ) ) {
 				$question                       = new ConfirmationQuestion( "<question>{$details['question']} [y/N]</question> ", false );
 				$this->conditional_tags[ $tag ] = $this->getHelper( 'question' )->ask( $input, $output, $question );
+			} else {
+				$this->conditional_tags[ $tag ] = false;
 			}
 			$input->setOption( $tag, $this->conditional_tags[ $tag ] );
 		}
@@ -229,5 +248,34 @@ final class GitHub_Checklist_Add extends Command {
 		$question = new ChoiceQuestion( '<question>Where is the site hosted? [pressable]:</question> ', self::HOSTS, 'pressable' );
 		$question->setValidator( fn( $value ) => validate_user_choice( $value, self::HOSTS ) );
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
+	}
+
+	/**
+	 * Retrieves the checklist from the repository.
+	 *
+	 * @param   string          $checklist The checklist to retrieve.
+	 * @param   OutputInterface $output    The output interface.
+	 *
+	 * @return  string
+	 */
+	private function get_checklist( string $checklist, OutputInterface $output ): string {
+		// Temporary directory to clone the repository
+		$temp_dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid( 'team51-checklists_', true );
+		$repo_url = self::CHECKLISTS_REPOSITORY_URL;
+
+		$output->writeln( "<comment>Retrieving {$checklist} checklist from GitHub...</comment>" );
+
+		// Clone the repository
+		\run_system_command( array( 'git', 'clone', $repo_url, $temp_dir ), sys_get_temp_dir() );
+
+		$checklist_file = $temp_dir . '/' . $checklist . '.md';
+		if ( ! file_exists( $checklist_file ) ) {
+			throw new \Exception( "Checklist file not found: {$checklist_file}" );
+		}
+
+		$checklist_text = file_get_contents( $checklist_file );
+		\run_system_command( array( 'rm', '-rf', $temp_dir ), sys_get_temp_dir() );
+
+		return $checklist_text;
 	}
 }
