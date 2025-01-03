@@ -198,6 +198,8 @@ final class GitHub_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
+		$this->checklist_text = $this->parse_checklist_text( $this->checklist_text );
+		$output->writeln( $this->checklist_text );
 		return Command::SUCCESS;
 	}
 
@@ -277,5 +279,55 @@ final class GitHub_Checklist_Add extends Command {
 		\run_system_command( array( 'rm', '-rf', $temp_dir ), sys_get_temp_dir() );
 
 		return $checklist_text;
+	}
+
+	/**
+	 * Parse the checklist text for conditional tags.
+	 *
+	 * @param   string $checklist_text The checklist text.
+	 *
+	 * @return  string
+	 */
+	private function parse_checklist_text( string $checklist_text ): string {
+		$lines        = explode( "\n", $checklist_text );
+		$parsed_lines = array();
+		$current_tag  = null;
+		$skipping_tag = false;
+		foreach ( $lines as $line ) {
+			echo $line . "\n";
+			// If the line contains a conditional tag, check if it is set to true in the conditional_tags array.
+			if ( str_starts_with( trim( $line ), '[' ) && str_ends_with( trim( $line ), ']' ) ) {
+				$tag = trim( $line, '[]' );
+				// If the line contains the end tag, remove it and reset the current tag.
+				if ( $current_tag && str_contains( $line, '[/' . $current_tag . ']' ) ) {
+					$current_tag  = null;
+					$skipping_tag = false;
+					echo "Ending tag: {$tag}\n";
+					continue;
+				}
+
+				if ( isset( $this->conditional_tags[ $tag ] ) && true === $this->conditional_tags[ $tag ] ) {
+					// Remove this line from the array and mark to check for the end tag.
+					echo "Found tag: {$tag}\n";
+					continue;
+				}
+
+				// If the tag is not set to true, skip all lines until the end tag is found.
+				$skipping_tag = true;
+				$current_tag  = $tag;
+				echo "Skipping tag: {$tag}\n";
+				continue;
+			}
+
+			// If we are skipping the tag, skip this line.
+			if ( $skipping_tag ) {
+				continue;
+			}
+
+			echo "....Adding line\n";
+			$parsed_lines[] = $line;
+		}
+		echo "End parsing\n\n";
+		return implode( "\n", $parsed_lines );
 	}
 }
