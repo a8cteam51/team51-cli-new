@@ -88,6 +88,13 @@ final class GitHub_Checklist_Add extends Command {
 	);
 
 	/**
+	 * The checklist to add.
+	 *
+	 * @var string
+	 */
+	private ?string $checklist = null;
+
+	/**
 	 * The repository to add the checklist to.
 	 *
 	 * @var \stdClass|null
@@ -129,6 +136,10 @@ final class GitHub_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
+		// Get the checklist.
+		$this->checklist = get_enum_input( $input, 'checklist', array_keys( self::CHECKLISTS ), fn() => $this->prompt_checklist_input( $input, $output ) );
+		$input->setArgument( 'checklist', $this->checklist );
+
 		// Retrieve the repository.
 		$this->gh_repository = get_github_repository_input( $input, fn() => $this->prompt_repository_input( $input, $output ) );
 		$input->setArgument( 'repository', $this->gh_repository );
@@ -273,6 +284,19 @@ final class GitHub_Checklist_Add extends Command {
 
 		$output->writeln( '<info>Done!</info>' );
 		return Command::SUCCESS;
+	}
+
+	/**
+	 * Prompts the user to input a checklist.
+	 *
+	 * @param   InputInterface  $input  The input interface.
+	 * @param   OutputInterface $output The output interface.
+	 *
+	 * @return  string
+	 */
+	private function prompt_checklist_input( InputInterface $input, OutputInterface $output ): string {
+		$question = new ChoiceQuestion( '<question>Please select the checklist to add [launch]:</question> ', self::CHECKLISTS, 'launch' );
+		return $this->getHelper( 'question' )->ask( $input, $output, $question );
 	}
 
 	/**
