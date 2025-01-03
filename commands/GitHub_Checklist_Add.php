@@ -187,7 +187,7 @@ final class GitHub_Checklist_Add extends Command {
 	 */
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
 		$tags     = implode( ', ', array_keys( array_filter( $this->conditional_tags ) ) );
-		$question = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist} checklist to the {$this->gh_repository->full_name} repository with these tags: {$tags}? [y/N]</question> ", false );
+		$question = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist} checklist to the {$this->gh_repository->full_name} repository on host " . self::HOSTS[ $this->host ] . " with these tags: {$tags}? [y/N]</question> ", false );
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
@@ -306,7 +306,11 @@ final class GitHub_Checklist_Add extends Command {
 					continue;
 				}
 
-				if ( isset( $this->conditional_tags[ $tag ] ) && true === $this->conditional_tags[ $tag ] ) {
+				if ( ( isset( $this->conditional_tags[ $tag ] ) && array_key_exists( $tag, $this->conditional_tags ) && true === $this->conditional_tags[ $tag ] )
+					|| ( str_starts_with( $tag, 'host:' ) && $this->host === substr( $tag, 5 ) )
+					|| ( str_starts_with( $tag, 'not:host:' ) && $this->host !== substr( $tag, 9 ) )
+					|| ( str_starts_with( $tag, 'not:' ) && array_key_exists( substr( $tag, 4 ), $this->conditional_tags ) && false === $this->conditional_tags[ substr( $tag, 4 ) ] )
+				) {
 					// Remove this line from the array and mark to check for the end tag.
 					echo "Found tag: {$tag}\n";
 					continue;
