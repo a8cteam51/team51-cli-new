@@ -49,10 +49,6 @@ final class GitHub_Checklist_Add extends Command {
 			'question'    => 'Is this an a8c property or product website?',
 			'description' => 'This site is an a8c property or product website.',
 		),
-		'migrate-pressable-dns'        => array(
-			'question'    => 'Will the site DNS be migrated to Pressable?',
-			'description' => 'The site DNS will be migrated to Pressable.',
-		),
 		'partner-pays-wpcom'           => array(
 			'question'    => 'Will the partner be paying WordPress.com for hosting?',
 			'description' => 'The partner will be paying WordPress.com for hosting.',
@@ -65,21 +61,13 @@ final class GitHub_Checklist_Add extends Command {
 			'question'    => 'Does the site have Sensei installed?',
 			'description' => 'The site has Sensei installed.',
 		),
-		'videopress'                   => array(
-			'question'    => 'Does the site use VideoPress?',
-			'description' => 'The site uses VideoPress.',
-		),
 		'woocommerce'                  => array(
 			'question'    => 'Does the site have WooCommerce installed?',
 			'description' => 'The site has WooCommerce installed.',
 		),
 		'wpcom-to-pressable-migration' => array(
-			'question'    => 'Is the site migrating from WordPress.com (Simple or VIP) to Pressable?',
-			'description' => 'The site is migrating from WordPress.com (Simple or VIP) to Pressable.',
-		),
-		'yoast'                        => array(
-			'question'    => 'Does the site have Yoast installed?',
-			'description' => 'The site has Yoast installed.',
+			'question'    => 'Has the site previously been hosted on WordPress.com or WordPress VIP?',
+			'description' => 'The site has previously been hosted on WordPress.com or WordPress VIP.',
 		),
 	);
 
