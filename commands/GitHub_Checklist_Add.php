@@ -294,7 +294,6 @@ final class GitHub_Checklist_Add extends Command {
 		$current_tag  = null;
 		$skipping_tag = false;
 		foreach ( $lines as $line ) {
-			echo $line . "\n";
 			// If the line contains a conditional tag, check if it is set to true in the conditional_tags array.
 			if ( str_starts_with( trim( $line ), '[' ) && str_ends_with( trim( $line ), ']' ) ) {
 				$tag = trim( $line, '[]' );
@@ -302,7 +301,6 @@ final class GitHub_Checklist_Add extends Command {
 				if ( $current_tag && str_contains( $line, '[/' . $current_tag . ']' ) ) {
 					$current_tag  = null;
 					$skipping_tag = false;
-					echo "Ending tag: {$tag}\n";
 					continue;
 				}
 
@@ -312,14 +310,12 @@ final class GitHub_Checklist_Add extends Command {
 					|| ( str_starts_with( $tag, 'not:' ) && array_key_exists( substr( $tag, 4 ), $this->conditional_tags ) && false === $this->conditional_tags[ substr( $tag, 4 ) ] )
 				) {
 					// Remove this line from the array and mark to check for the end tag.
-					echo "Found tag: {$tag}\n";
 					continue;
 				}
 
 				// If the tag is not set to true, skip all lines until the end tag is found.
 				$skipping_tag = true;
 				$current_tag  = $tag;
-				echo "Skipping tag: {$tag}\n";
 				continue;
 			}
 
@@ -328,10 +324,9 @@ final class GitHub_Checklist_Add extends Command {
 				continue;
 			}
 
-			echo "....Adding line\n";
 			$parsed_lines[] = $line;
 		}
-		echo "End parsing\n\n";
+
 		return implode( "\n", $parsed_lines );
 	}
 }
