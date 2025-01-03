@@ -141,7 +141,10 @@ final class GitHub_Checklist_Add extends Command {
 		$input->setArgument( 'checklist', $this->checklist );
 
 		// Retrieve the repository.
-		$this->gh_repository = get_github_repository_input( $input, fn() => $this->prompt_repository_input( $input, $output ) );
+		while ( ! $this->gh_repository ) {
+			$this->gh_repository = get_github_repository_input( $input, fn() => $this->prompt_repository_input( $input, $output ) );
+		}
+
 		$input->setArgument( 'repository', $this->gh_repository );
 
 		$this->host = get_enum_input( $input, 'host', array_keys( self::HOSTS ), fn() => $this->prompt_host_input( $input, $output ) );
@@ -152,13 +155,15 @@ final class GitHub_Checklist_Add extends Command {
 			$this->conditional_tags[ $tag ] = get_bool_input( $input, $tag );
 			$input->setOption( $tag, $this->conditional_tags[ $tag ] );
 		}
+		$output->writeln( "<comment>Conditional tags: " . var_export( $this->conditional_tags, true ) . "</comment>", Output::VERBOSITY_VERBOSE );
 	}
 
 	/**
 	 * {@inheritDoc}
 	 */
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
-		$question = new ConfirmationQuestion( "<question>Are you sure you want to connect the WPCOM site `{$this->site->name}` (ID {$this->site->ID}, URL {$this->site->URL}) to the GitHub repository `{$this->gh_repository->full_name}`? [y/N]</question> ", false );
+		$tags = implode( ',', array_keys( array_filter( $this->conditional_tags ) ) );
+		$question = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist} checklist to the {$this->gh_repository->full_name} repository with tags [{$tags}]? [y/N]</question> ", false );
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
@@ -305,15 +310,20 @@ final class GitHub_Checklist_Add extends Command {
 	 * @param   InputInterface  $input  The input interface.
 	 * @param   OutputInterface $output The output interface.
 	 *
-	 * @return  string
+	 * @return  string|null
 	 */
-	private function prompt_repository_input( InputInterface $input, OutputInterface $output ): string {
+	private function prompt_repository_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Please enter the slug of the GitHub repository to add the checklist to:</question> ' );
 		if ( ! $input->getOption( 'no-autocomplete' ) ) {
 			$question->setAutocompleterValues( array_column( get_github_repositories() ?? array(), 'name' ) );
 		}
 
-		return $this->getHelper( 'question' )->ask( $input, $output, $question );
+		$repository = $this->getHelper( 'question' )->ask( $input, $output, $question );
+		if ( ! $repository ) {
+			return null;
+		}
+
+		return $repository;
 	}
 
 	/**
