@@ -59,13 +59,6 @@ final class GitHub_Repository_Create extends Command {
 	private ?string $no_code_theme = null;
 
 	/**
-	 * The directory containing the a8c themes.
-	 *
-	 * @var string|null
-	 */
-	private ?string $a8c_themes_dir = null;
-
-	/**
 	 * The custom properties to set for the repository.
 	 *
 	 * @var array|null
@@ -86,7 +79,8 @@ final class GitHub_Repository_Create extends Command {
 		$this->addArgument( 'name', InputArgument::REQUIRED, 'The name of the repository to create.' )
 			->addOption( 'homepage', null, InputOption::VALUE_REQUIRED, 'A URL with more information about the repository.' )
 			->addOption( 'description', null, InputOption::VALUE_REQUIRED, 'A short, human-friendly description for this project.' )
-			->addOption( 'type', null, InputOption::VALUE_REQUIRED, 'The name of the template repository to use, if any. One of either `project`, `no-code-project`, `plugin`, or `issues`. Default empty repo.' );
+			->addOption( 'type', null, InputOption::VALUE_REQUIRED, 'The name of the template repository to use, if any. One of either `project`, `no-code-project`, `plugin`, or `issues`. Default empty repo.' )
+			->addOption( 'no-code-theme', null, InputOption::VALUE_OPTIONAL, 'The name of the no-code theme to use for the repository.' );
 
 		$this->addOption( 'custom-properties', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'The custom properties to set for the repository.' );
 	}
@@ -98,9 +92,9 @@ final class GitHub_Repository_Create extends Command {
 		$this->name = slugify( get_string_input( $input, 'name', fn() => $this->prompt_name_input( $input, $output ) ) );
 		$input->setArgument( 'name', $this->name );
 
-		$this->homepage       = $input->getOption( 'homepage' );
-		$this->description    = $input->getOption( 'description' );
-		$this->a8c_themes_dir = dirname( getcwd() ) . '/a8c-themes';
+		$this->homepage      = $input->getOption( 'homepage' );
+		$this->description   = $input->getOption( 'description' );
+		$this->no_code_theme = $input->getOption( 'no-code-theme' );
 
 		$this->type = get_enum_input( $input, 'type', array( 'project', 'no-code-project', 'plugin', 'issues' ), fn() => $this->prompt_type_input( $input, $output ) );
 		$input->setOption( 'type', $this->type );
@@ -233,39 +227,21 @@ final class GitHub_Repository_Create extends Command {
 	 * @param OutputInterface $output The output interface.
 	 */
 	private function setup_no_code_theme( InputInterface $input, OutputInterface $output ): void {
-		$output->writeln( '<comment>Fetching a8c themes in the parent directory of the Team51 CLI...</comment>' );
-
-		if ( ! is_dir( $this->a8c_themes_dir ) ) {
-			$command     = sprintf(
-				'cd %s && git clone git@github.com:Automattic/themes.git a8c-themes',
-				dirname( getcwd() )
-			);
-			$exec_output = array();
-			exec( $command, $exec_output, $return_code );
-			if ( 0 !== $return_code ) {
-				$output->writeln( '<error>Failed to clone a8c-themes repository.</error>' );
-				exit( 1 );
-			}
-		} else {
-			$command     = sprintf(
-				'cd %s && git pull',
-				$this->a8c_themes_dir
-			);
-			$exec_output = array();
-			exec( $command, $exec_output, $return_code );
-			if ( 0 !== $return_code ) {
-				$output->writeln( '<error>Failed to pull latest changes from a8c-themes repository.</error>' );
-				exit( 1 );
-			}
+		$folders = get_a8c_theme_choices( $output );
+		if ( empty( $folders ) ) {
+			$output->writeln( '<error>Failed to fetch a8c themes.</error>' );
+			return;
 		}
 
-		// Get list of main folders in the repo
-		$folders = array_filter(
-			scandir( $this->a8c_themes_dir ),
-			function ( $item ) {
-				return is_dir( $this->a8c_themes_dir . '/' . $item ) && ! in_array( $item, array( '.', '..', '.git' ), true );
+		if ( ! empty( $this->no_code_theme ) ) {
+			if ( ! in_array( $this->no_code_theme, $folders, true ) ) {
+				$output->writeln( '<error>The selected no-code theme is not available.</error>' );
+				$output->writeln( '<error>Please select a different theme or press enter to skip.</error>' );
+				$this->no_code_theme = null;
+			} else {
+				return;
 			}
-		);
+		}
 
 		$question            = new ChoiceQuestion(
 			'<question>Please select the no-code theme to use:</question> ',
@@ -312,10 +288,11 @@ final class GitHub_Repository_Create extends Command {
 			'cd %s && mkdir -p themes/%s && cp -r %s/%s/* themes/%s',
 			$temp_dir,
 			$this->name,
-			$this->a8c_themes_dir,
+			dirname( TEAM51_CLI_ROOT_DIR ) . '/a8c-themes',
 			$this->no_code_theme,
 			$this->name
 		);
+
 		exec( $copy_command, $exec_output, $return_code );
 		if ( 0 !== $return_code ) {
 			$output->writeln( '<error>Failed to copy theme files.</error>' );
