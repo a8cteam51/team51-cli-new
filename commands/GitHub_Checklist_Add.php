@@ -258,7 +258,7 @@ final class GitHub_Checklist_Add extends Command {
 		// Clone the repository
 		\run_system_command( array( 'git', 'clone', $repo_url, $temp_dir ), sys_get_temp_dir() );
 
-		$checklist_file = $temp_dir . '/' . $checklist . '.md';
+		$checklist_file = $temp_dir . '/checklists/' . $checklist . '.md';
 		if ( ! file_exists( $checklist_file ) ) {
 			throw new \Exception( "Checklist file not found: {$checklist_file}" );
 		}
