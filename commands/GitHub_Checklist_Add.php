@@ -192,6 +192,7 @@ final class GitHub_Checklist_Add extends Command {
 			$output->writeln( '<error>Failed to create checklist issue.</error>' );
 			return Command::FAILURE;
 		}
+		$output->writeln( print_r( $response, true ), OutputInterface::VERBOSITY_VERBOSE );
 		$output->writeln( sprintf( '<info>Checklist issue #%d created successfully.</info> <comment>%s</comment>', $response->id, $response->url ) );
 		return Command::SUCCESS;
 	}

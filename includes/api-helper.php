@@ -95,7 +95,6 @@ final class API_Helper {
 	 * @return  stdClass|stdClass[]|true|null
 	 */
 	protected static function make_request( string $endpoint, string $method, mixed $body = null ): stdClass|array|true|null {
-		console_writeln( "🔍 Making $method request to $endpoint with body: " . json_encode( $body ) );
 		$body   = is_null( $body ) ? null : encode_json_content( $body );
 		$result = get_remote_content(
 			$endpoint,
