@@ -147,21 +147,23 @@ final class GitHub_Checklist_Add extends Command {
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
 		// We will only ask for tags if arguments are not provided.
 		$has_args = $input->getArgument( 'checklist' ) && $input->getArgument( 'repository' ) && $input->getArgument( 'host' );
+		$output->writeln( $has_args ? 'Using arguments' : 'Using prompts', OutputInterface::VERBOSITY_DEBUG );
 
 		// Get the checklist.
 		$this->checklist = get_enum_input( $input, 'checklist', array_keys( self::CHECKLISTS ), fn() => $this->prompt_checklist_input( $input, $output ) );
 		$input->setArgument( 'checklist', $this->checklist );
+		$output->writeln( 'Checklist set to ' . $this->checklist, OutputInterface::VERBOSITY_DEBUG );
 
 		// Retrieve the repository.
 		while ( ! $this->gh_repository ) {
 			$this->gh_repository = get_github_repository_input( $input, fn() => $this->prompt_repository_input( $input, $output ) );
 		}
-
+		$output->writeln( 'Repository set to ' . $this->gh_repository->name, OutputInterface::VERBOSITY_DEBUG );
 		$input->setArgument( 'repository', $this->gh_repository );
 
 		$this->host = get_enum_input( $input, 'host', array_keys( self::HOSTS ), fn() => $this->prompt_host_input( $input, $output ) );
 		$input->setArgument( 'host', $this->host );
-
+		$output->writeln( 'Host set to ' . $this->host, OutputInterface::VERBOSITY_DEBUG );
 		// Check the conditional tags that are in the actual checklist on the repository.
 		$this->checklist_text = $this->get_checklist( $this->checklist, $output );
 
@@ -175,9 +177,11 @@ final class GitHub_Checklist_Add extends Command {
 				$this->conditional_tags[ $tag ] = false;
 			}
 			$input->setOption( $tag, $this->conditional_tags[ $tag ] );
+			$output->writeln( 'Conditional tag ' . $tag . ' set to ' . ( $this->conditional_tags[ $tag ] ? 'true' : 'false' ), OutputInterface::VERBOSITY_DEBUG );
 		}
 
 		$this->skip_issue = $input->getOption( 'skip-issue' );
+		$output->writeln( 'Skip issue set to ' . ( $this->skip_issue ? 'true' : 'false' ), OutputInterface::VERBOSITY_DEBUG );
 	}
 
 	/**
@@ -196,7 +200,7 @@ final class GitHub_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
-		$this->checklist_text = $this->parse_checklist_text( $this->checklist_text );
+		$this->checklist_text = $this->parse_checklist_text( $this->checklist_text, $output );
 		if ( $this->skip_issue ) {
 			$output->writeln( $this->checklist_text );
 			return Command::SUCCESS;
@@ -296,17 +300,20 @@ final class GitHub_Checklist_Add extends Command {
 	 *
 	 * @return  string
 	 */
-	private function parse_checklist_text( string $checklist_text ): string {
+	private function parse_checklist_text( string $checklist_text, OutputInterface $output ): string {
 		$lines        = explode( "\n", $checklist_text );
 		$parsed_lines = array();
 		$current_tag  = null;
 		$skipping_tag = false;
 		foreach ( $lines as $line ) {
+			$output->writeln( 'Parsing line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
 			// If the line contains a conditional tag, check if it is set to true in the conditional_tags array.
 			if ( str_starts_with( trim( $line ), '[' ) && str_ends_with( trim( $line ), ']' ) ) {
+				$output->writeln( 'Found tag: ' . trim( $line, '[]' ), OutputInterface::VERBOSITY_DEBUG );
 				$tag = trim( $line, '[]' );
 				// If the line contains the end tag, remove it and reset the current tag.
 				if ( $current_tag && str_contains( $line, '[/' . $current_tag . ']' ) ) {
+					$output->writeln( 'End tag found for ' . $current_tag, OutputInterface::VERBOSITY_DEBUG );
 					$current_tag  = null;
 					$skipping_tag = false;
 					continue;
@@ -318,10 +325,12 @@ final class GitHub_Checklist_Add extends Command {
 					|| ( str_starts_with( $tag, 'not:' ) && array_key_exists( substr( $tag, 4 ), $this->conditional_tags ) && false === $this->conditional_tags[ substr( $tag, 4 ) ] )
 				) {
 					// Remove this line from the array and mark to check for the end tag.
+					$output->writeln( 'Tag is true, removing line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
 					continue;
 				}
 
 				// If the tag is not set to true, skip all lines until the end tag is found.
+				$output->writeln( 'Tag is false, skipping lines until end tag is found: ' . $tag, OutputInterface::VERBOSITY_DEBUG );
 				$skipping_tag = true;
 				$current_tag  = $tag;
 				continue;
@@ -329,9 +338,11 @@ final class GitHub_Checklist_Add extends Command {
 
 			// If we are skipping the tag, skip this line.
 			if ( $skipping_tag ) {
+				$output->writeln( 'Skipping line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
 				continue;
 			}
 
+			$output->writeln( 'Adding line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
 			$parsed_lines[] = $line;
 		}
 
