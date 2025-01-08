@@ -118,6 +118,13 @@ final class GitHub_Checklist_Add extends Command {
 	protected array $conditional_tags = array();
 
 	/**
+	 * Whether to skip creating the issue on the repository.
+	 *
+	 * @var bool
+	 */
+	protected bool $skip_issue = false;
+
+	/**
 	 * {@inheritDoc}
 	 */
 	protected function configure() {
@@ -126,7 +133,8 @@ final class GitHub_Checklist_Add extends Command {
 			->setHelp( 'This command adds a checklist to a GitHub repository.' )
 			->addArgument( 'checklist', InputArgument::REQUIRED, sprintf( 'The checklist to add. (%s)', implode( ', ', array_keys( self::CHECKLISTS ) ), 'launch', array_keys( self::CHECKLISTS ) ) )
 			->addArgument( 'repository', InputArgument::REQUIRED, 'The slug of the repository to add the checklist to.' )
-			->addArgument( 'host', InputArgument::REQUIRED, sprintf( 'The hosting platform of the site. (%s)', implode( ', ', array_keys( self::HOSTS ) ), 'pressable', array_keys( self::HOSTS ) ) );
+			->addArgument( 'host', InputArgument::REQUIRED, sprintf( 'The hosting platform of the site. (%s)', implode( ', ', array_keys( self::HOSTS ) ), 'pressable', array_keys( self::HOSTS ) ) )
+			->addOption( 'skip-issue', null, InputOption::VALUE_NONE, 'Skip creating the issue on the repository (for testing). Checklist text will be output to the terminal instead.' );
 
 		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
 			$this->addOption( $tag, null, InputOption::VALUE_NONE, $details['description'] );
@@ -168,6 +176,8 @@ final class GitHub_Checklist_Add extends Command {
 			}
 			$input->setOption( $tag, $this->conditional_tags[ $tag ] );
 		}
+
+		$this->skip_issue = $input->getOption( 'skip-issue' );
 	}
 
 	/**
@@ -187,7 +197,12 @@ final class GitHub_Checklist_Add extends Command {
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
 		$this->checklist_text = $this->parse_checklist_text( $this->checklist_text );
-		$response             = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist ] ), $this->checklist_text );
+		if ( $this->skip_issue ) {
+			$output->writeln( $this->checklist_text );
+			return Command::SUCCESS;
+		}
+
+		$response = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist ] ), $this->checklist_text );
 		if ( ! $response ) {
 			$output->writeln( '<error>Failed to create checklist issue.</error>' );
 			return Command::FAILURE;
