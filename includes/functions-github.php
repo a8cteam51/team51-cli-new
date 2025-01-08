@@ -269,14 +269,14 @@ function create_github_issue( string $repository, string $title, string $issue_b
 		'repo'   => $repository,
 		'title'  => $title,
 		'body'   => $issue_body,
+		'labels' => array( 'checklist' ),
 	);
 
 	return API_Helper::make_github_request(
-		'repositories/issues',
+		"repositories/{$repository}/issues",
 		'POST',
 		$body,
 	);
-
 }
 
 // endregion
