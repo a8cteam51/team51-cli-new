@@ -187,13 +187,12 @@ final class GitHub_Checklist_Add extends Command {
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
 		$this->checklist_text = $this->parse_checklist_text( $this->checklist_text );
-		$response = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist ] ), $this->checklist_text );
+		$response             = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist ] ), $this->checklist_text );
 		if ( ! $response ) {
 			$output->writeln( '<error>Failed to create checklist issue.</error>' );
 			return Command::FAILURE;
 		}
-		$output->writeln( print_r( $response, true ), OutputInterface::VERBOSITY_VERBOSE );
-		$output->writeln( sprintf( '<info>Checklist issue #%d created successfully.</info> <comment>%s</comment>', $response->id, $response->url ) );
+		$output->writeln( sprintf( '<info>Checklist issue #%d created successfully.</info> <comment>https://github.com/a8cteam51/%s/issues/%d</comment>', $response->number, $this->gh_repository->name, $response->number ) );
 		return Command::SUCCESS;
 	}
 

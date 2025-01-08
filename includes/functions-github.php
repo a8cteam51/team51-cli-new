@@ -264,12 +264,12 @@ function get_github_repository_from_deployhq_project( string $project ): ?stdCla
  *
  * @return  stdClass|null
  */
-function create_github_issue( string $repository, string $title, string $issue_body ): ?stdClass {
+function create_github_issue( string $repository, string $title, string $issue_body, array $labels = array() ): ?stdClass {
 	$body = array(
 		'repo'   => $repository,
 		'title'  => $title,
 		'body'   => $issue_body,
-		'labels' => array( 'checklist' ),
+		'labels' => $labels,
 	);
 
 	return API_Helper::make_github_request(
