@@ -307,10 +307,12 @@ final class GitHub_Checklist_Add extends Command {
 		$skipping_tag = false;
 		foreach ( $lines as $line ) {
 			$output->writeln( 'Parsing line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
+			$output->writeln( 'Current tag: ' . $current_tag, OutputInterface::VERBOSITY_DEBUG );
+			$output->writeln( 'Skipping tag: ' . ( $skipping_tag ? 'true' : 'false' ), OutputInterface::VERBOSITY_DEBUG );
 			// If the line contains a conditional tag, check if it is set to true in the conditional_tags array.
 			if ( str_starts_with( trim( $line ), '[' ) && str_ends_with( trim( $line ), ']' ) ) {
-				$output->writeln( 'Found tag: ' . trim( $line, '[]' ), OutputInterface::VERBOSITY_DEBUG );
 				$tag = trim( $line, '[]' );
+				$output->writeln( 'Found tag: ' . $tag, OutputInterface::VERBOSITY_DEBUG );
 				// If the line contains the end tag, remove it and reset the current tag.
 				if ( $current_tag && str_contains( $line, '[/' . $current_tag . ']' ) ) {
 					$output->writeln( 'End tag found for ' . $current_tag, OutputInterface::VERBOSITY_DEBUG );
@@ -319,13 +321,15 @@ final class GitHub_Checklist_Add extends Command {
 					continue;
 				}
 
+				// If the tag is set to true, remove the tag line and continue.
 				if ( ( isset( $this->conditional_tags[ $tag ] ) && array_key_exists( $tag, $this->conditional_tags ) && true === $this->conditional_tags[ $tag ] )
 					|| ( str_starts_with( $tag, 'host:' ) && $this->host === substr( $tag, 5 ) )
 					|| ( str_starts_with( $tag, 'not:host:' ) && $this->host !== substr( $tag, 9 ) )
 					|| ( str_starts_with( $tag, 'not:' ) && array_key_exists( substr( $tag, 4 ), $this->conditional_tags ) && false === $this->conditional_tags[ substr( $tag, 4 ) ] )
 				) {
-					// Remove this line from the array and mark to check for the end tag.
-					$output->writeln( 'Tag is true, removing line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
+					// Remove this line from the array, but set the current tag.
+					$output->writeln( 'Setting current tag to: ' . $tag, OutputInterface::VERBOSITY_DEBUG );
+					$current_tag = $tag;
 					continue;
 				}
 
