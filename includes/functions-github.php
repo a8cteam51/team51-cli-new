@@ -255,4 +255,28 @@ function get_github_repository_from_deployhq_project( string $project ): ?stdCla
 	return get_github_repository( $gh_repo_url->repo );
 }
 
+/**
+ * Creates a new issue in a given GitHub repository.
+ *
+ * @param   string $repository The name of the repository to create the issue in.
+ * @param   string $title      The title of the issue to create.
+ * @param   string $issue_body The body of the issue to create.
+ *
+ * @return  stdClass|null
+ */
+function create_github_issue( string $repository, string $title, string $issue_body, array $labels = array() ): ?stdClass {
+	$body = array(
+		'repo'   => $repository,
+		'title'  => $title,
+		'body'   => $issue_body,
+		'labels' => $labels,
+	);
+
+	return API_Helper::make_github_request(
+		"repositories/{$repository}/issues",
+		'POST',
+		$body,
+	);
+}
+
 // endregion
