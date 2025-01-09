@@ -90,11 +90,11 @@ final class GitHub_Checklist_Add extends Command {
 	private ?string $checklist_slug = null;
 
 	/**
-	 * The checklist contents.
+	 * The contents of the checklists.
 	 *
-	 * @var string
+	 * @var array
 	 */
-	private ?string $checklist_text = null;
+	private array $checklists = array();
 
 	/**
 	 * The repository to add the checklist to.
@@ -165,15 +165,23 @@ final class GitHub_Checklist_Add extends Command {
 		$input->setArgument( 'host', $this->host );
 		$output->writeln( 'Host set to ' . $this->host, OutputInterface::VERBOSITY_DEBUG );
 		// Check the conditional tags that are in the actual checklist on the repository.
-		$this->checklist_text = $this->get_checklist( $this->checklist_slug, $output );
+		$this->checklists = $this->get_checklists( $this->checklist_slug, $output );
 
 		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
 			if ( $has_args ) {
 				$this->conditional_tags[ $tag ] = get_bool_input( $input, $tag );
-			} elseif ( str_contains( $this->checklist_text, '[' . $tag . ']' ) ) {
-				$question                       = new ConfirmationQuestion( "<question>{$details['question']} [y/N]</question> ", false );
-				$this->conditional_tags[ $tag ] = $this->getHelper( 'question' )->ask( $input, $output, $question );
-			} else {
+				continue;
+			}
+			$asked = false;
+			foreach ( $this->checklists as $checklist ) {
+				if ( ! $asked && str_contains( $checklist, '[' . $tag . ']' ) ) {
+					$question                       = new ConfirmationQuestion( "<question>{$details['question']} [y/N]</question> ", false );
+					$this->conditional_tags[ $tag ] = $this->getHelper( 'question' )->ask( $input, $output, $question );
+					$asked                          = true;
+					continue;
+				}
+			}
+			if ( ! $asked ) {
 				$this->conditional_tags[ $tag ] = false;
 			}
 			$input->setOption( $tag, $this->conditional_tags[ $tag ] );
@@ -188,9 +196,9 @@ final class GitHub_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
-		$tags     = implode( ', ', array_keys( array_filter( $this->conditional_tags ) ) );
+		$tags      = implode( ', ', array_keys( array_filter( $this->conditional_tags ) ) );
 		$skip_text = $this->skip_issue ? ' (Checklist text will be output to the terminal instead of creating an issue.)' : '';
-		$question = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist_slug} checklist to the {$this->gh_repository->full_name} repository on host " . self::HOSTS[ $this->host ] . " with these tags: {$tags}? [y/N]{$skip_text}</question> ", false );
+		$question  = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist_slug} checklist to the {$this->gh_repository->full_name} repository on host " . self::HOSTS[ $this->host ] . " with these tags: {$tags}? [y/N]{$skip_text}</question> ", false );
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
@@ -201,27 +209,43 @@ final class GitHub_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
-		$this->checklist_text = $this->parse_checklist_text( $this->checklist_text, $output );
-		if ( $this->skip_issue ) {
-			$output->writeln( $this->checklist_text );
-			return Command::SUCCESS;
+		$main_issue_source = array_shift( $this->checklists );
+		$main_issue_text   = $this->parse_checklist_text( $main_issue_source, $output );
+		$issue_number      = null;
+		if ( ! $this->skip_issue ) {
+			$response = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist_slug ] ), $main_issue_text );
+			if ( ! $response ) {
+				$output->writeln( '<error>Failed to create checklist issue.</error>' );
+				return Command::FAILURE;
+			}
+			$issue_number = $response->number;
+		} else {
+			$output->writeln( $main_issue_text );
+		}
+		foreach ( $this->checklists as $checklist ) {
+			// The MD heading in the first line of the checklist is the title of the sub-issue.
+			$heading        = explode( "\n", $checklist )[0];
+			$title          = trim( $heading, '# ' );
+			$checklist_text = $this->parse_checklist_text( $checklist, $output );
+			if ( $this->skip_issue ) {
+				$output->writeln( '<comment>********************************************************************************</comment>' );
+				$output->writeln( $title );
+				$output->writeln( $checklist_text );
+				continue;
+			}
+			$response = create_github_issue( $this->gh_repository->name, $title, $checklist_text );
+			if ( ! $response ) {
+					$output->writeln( '<error>Failed to create sub-issue.</error>' );
+					return Command::FAILURE;
+			}
+			$response = create_github_sub_issue( $this->gh_repository->name, $issue_number, $response->id );
+			if ( ! $response ) {
+				$output->writeln( '<error>Failed to assign sub-issue to main issue.</error>' );
+				return Command::FAILURE;
+			}
 		}
 
-		$response = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist_slug ] ), $this->checklist_text );
-		if ( ! $response ) {
-			$output->writeln( '<error>Failed to create checklist issue.</error>' );
-			return Command::FAILURE;
-		}
-
-		$issue_number = $response->number;
-		$output->writeln( 'Checklist issue #' . $issue_number . ' created successfully.(ID: ' . $response->id . ')', OutputInterface::VERBOSITY_DEBUG );
-		$response = create_github_sub_issue( $this->gh_repository->name, $issue_number, 2778727169 );
-		if ( ! $response ) {
-			$output->writeln( '<error>Failed to create sub-issue.</error>' );
-			return Command::FAILURE;
-		}
-
-		$output->writeln( sprintf( '<info>Checklist issue #%d created successfully.</info> <comment>https://github.com/a8cteam51/%s/issues/%d</comment>', $response->number, $this->gh_repository->name, $response->number ) );
+		$output->writeln( sprintf( '<info>Checklist issue #%d created successfully.</info> <comment>https://github.com/a8cteam51/%s/issues/%d</comment>', $issue_number, $this->gh_repository->name, $issue_number ) );
 		return Command::SUCCESS;
 	}
 
@@ -275,38 +299,61 @@ final class GitHub_Checklist_Add extends Command {
 	}
 
 	/**
-	 * Retrieves the checklist from the repository.
+	 * Retrieves the checklists from the repository.
 	 *
-	 * @param   string          $checklist The checklist to retrieve.
-	 * @param   OutputInterface $output    The output interface.
+	 * @param   string          $checklist_slug The checklist slug to retrieve.
+	 * @param   OutputInterface $output         The output interface.
 	 *
-	 * @return  string
+	 * @throws  \Exception If the checklist file is not found.
+	 *
+	 * @return  array
 	 */
-	private function get_checklist( string $checklist, OutputInterface $output ): string {
+	private function get_checklists( string $checklist_slug, OutputInterface $output ): array {
+		$checklists = array();
 		// Temporary directory to clone the repository
 		$temp_dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid( 'team51-checklists_', true );
 		$repo_url = self::CHECKLISTS_REPOSITORY_URL;
 
-		$output->writeln( "<comment>Retrieving {$checklist} checklist from GitHub...</comment>" );
+		$output->writeln( "<comment>Retrieving {$checklist_slug} checklist from GitHub...</comment>" );
 
 		// Clone the repository
 		\run_system_command( array( 'git', 'clone', $repo_url, $temp_dir ), sys_get_temp_dir() );
 
-		$checklist_file = $temp_dir . '/checklists/' . $checklist . '.md';
+		$checklist_file = $temp_dir . '/checklists/' . $checklist_slug . '.md';
 		if ( ! file_exists( $checklist_file ) ) {
 			throw new \Exception( "Checklist file not found: {$checklist_file}" );
 		}
 
 		$checklist_text = file_get_contents( $checklist_file );
+		$checklists[]   = $checklist_text;
+
+		// Check the checklist text for [subissue:] tags and add the sub-issue to the checklists array.
+		foreach ( explode( "\n", $checklist_text ) as $line ) {
+			$output->writeln( 'Checking line: ' . $line, OutputInterface::VERBOSITY_DEBUG );
+			if ( str_contains( $line, '[subissue:' ) ) {
+				$output->writeln( 'Found sub-issue tag', OutputInterface::VERBOSITY_DEBUG );
+				// Extract filename between [subissue: and ]
+				$filename       = substr( $line, strpos( $line, '[subissue:' ) + 10, strpos( $line, ']' ) - ( strpos( $line, '[subissue:' ) + 10 ) );
+				$checklist_path = $temp_dir . '/checklists/' . $checklist_slug . '/' . $filename . '.md';
+				$output->writeln( 'Checklist path: ' . $checklist_path, OutputInterface::VERBOSITY_DEBUG );
+				if ( file_exists( $checklist_path ) ) {
+					$checklists[] = file_get_contents( $checklist_path );
+				}
+			}
+		}
+
 		\run_system_command( array( 'rm', '-rf', $temp_dir ), sys_get_temp_dir() );
 
-		return $checklist_text;
+		return $checklists;
 	}
 
 	/**
 	 * Parse the checklist text for conditional tags.
 	 *
-	 * @param   string $checklist_text The checklist text.
+	 * @param   string          $checklist_text The checklist text.
+	 * @param   OutputInterface $output The output interface.
+	 *
+	 * @throws  \Exception If the checklist text is not valid.
 	 *
 	 * @return  string
 	 */
@@ -323,6 +370,11 @@ final class GitHub_Checklist_Add extends Command {
 			if ( str_starts_with( trim( $line ), '[' ) && str_ends_with( trim( $line ), ']' ) ) {
 				$tag = trim( $line, '[]' );
 				$output->writeln( 'Found tag: ' . $tag, OutputInterface::VERBOSITY_DEBUG );
+				// If this is a sub-issue tag, discard it.
+				if ( str_contains( $tag, 'subissue:' ) ) {
+					$output->writeln( 'Discarding sub-issue tag: ' . $tag, OutputInterface::VERBOSITY_DEBUG );
+					continue;
+				}
 				// If the line contains the end tag, remove it and reset the current tag.
 				if ( $current_tag && str_contains( $line, '[/' . $current_tag . ']' ) ) {
 					$output->writeln( 'End tag found for ' . $current_tag, OutputInterface::VERBOSITY_DEBUG );
@@ -333,8 +385,8 @@ final class GitHub_Checklist_Add extends Command {
 
 				// If the tag is set to true, remove the tag line and continue.
 				if ( ( isset( $this->conditional_tags[ $tag ] ) && array_key_exists( $tag, $this->conditional_tags ) && true === $this->conditional_tags[ $tag ] )
-					|| ( str_starts_with( $tag, 'host:' ) && $this->host === substr( $tag, 5 ) )
-					|| ( str_starts_with( $tag, 'not:host:' ) && $this->host !== substr( $tag, 9 ) )
+					|| ( str_starts_with( $tag, 'host:' ) && substr( $tag, 5 ) === $this->host )
+					|| ( str_starts_with( $tag, 'not:host:' ) && substr( $tag, 9 ) !== $this->host )
 					|| ( str_starts_with( $tag, 'not:' ) && array_key_exists( substr( $tag, 4 ), $this->conditional_tags ) && false === $this->conditional_tags[ substr( $tag, 4 ) ] )
 				) {
 					// Remove this line from the array, but set the current tag.
