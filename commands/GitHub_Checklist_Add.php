@@ -87,7 +87,7 @@ final class GitHub_Checklist_Add extends Command {
 	 *
 	 * @var string
 	 */
-	private ?string $checklist = null;
+	private ?string $checklist_slug = null;
 
 	/**
 	 * The checklist contents.
@@ -150,9 +150,9 @@ final class GitHub_Checklist_Add extends Command {
 		$output->writeln( $has_args ? 'Using arguments' : 'Using prompts', OutputInterface::VERBOSITY_DEBUG );
 
 		// Get the checklist.
-		$this->checklist = get_enum_input( $input, 'checklist', array_keys( self::CHECKLISTS ), fn() => $this->prompt_checklist_input( $input, $output ) );
-		$input->setArgument( 'checklist', $this->checklist );
-		$output->writeln( 'Checklist set to ' . $this->checklist, OutputInterface::VERBOSITY_DEBUG );
+		$this->checklist_slug = get_enum_input( $input, 'checklist', array_keys( self::CHECKLISTS ), fn() => $this->prompt_checklist_input( $input, $output ) );
+		$input->setArgument( 'checklist', $this->checklist_slug );
+		$output->writeln( 'Checklist set to ' . $this->checklist_slug, OutputInterface::VERBOSITY_DEBUG );
 
 		// Retrieve the repository.
 		while ( ! $this->gh_repository ) {
@@ -165,7 +165,7 @@ final class GitHub_Checklist_Add extends Command {
 		$input->setArgument( 'host', $this->host );
 		$output->writeln( 'Host set to ' . $this->host, OutputInterface::VERBOSITY_DEBUG );
 		// Check the conditional tags that are in the actual checklist on the repository.
-		$this->checklist_text = $this->get_checklist( $this->checklist, $output );
+		$this->checklist_text = $this->get_checklist( $this->checklist_slug, $output );
 
 		foreach ( self::CONDITIONAL_TAGS as $tag => $details ) {
 			if ( $has_args ) {
@@ -190,7 +190,7 @@ final class GitHub_Checklist_Add extends Command {
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
 		$tags     = implode( ', ', array_keys( array_filter( $this->conditional_tags ) ) );
 		$skip_text = $this->skip_issue ? ' (Checklist text will be output to the terminal instead of creating an issue.)' : '';
-		$question = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist} checklist to the {$this->gh_repository->full_name} repository on host " . self::HOSTS[ $this->host ] . " with these tags: {$tags}? [y/N]{$skip_text}</question> ", false );
+		$question = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist_slug} checklist to the {$this->gh_repository->full_name} repository on host " . self::HOSTS[ $this->host ] . " with these tags: {$tags}? [y/N]{$skip_text}</question> ", false );
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
@@ -207,11 +207,20 @@ final class GitHub_Checklist_Add extends Command {
 			return Command::SUCCESS;
 		}
 
-		$response = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist ] ), $this->checklist_text );
+		$response = create_github_issue( $this->gh_repository->name, sprintf( '%s Checklist', self::CHECKLISTS[ $this->checklist_slug ] ), $this->checklist_text );
 		if ( ! $response ) {
 			$output->writeln( '<error>Failed to create checklist issue.</error>' );
 			return Command::FAILURE;
 		}
+
+		$issue_number = $response->number;
+		$output->writeln( 'Checklist issue #' . $issue_number . ' created successfully.(ID: ' . $response->id . ')', OutputInterface::VERBOSITY_DEBUG );
+		$response = create_github_sub_issue( $this->gh_repository->name, $issue_number, 2778727169 );
+		if ( ! $response ) {
+			$output->writeln( '<error>Failed to create sub-issue.</error>' );
+			return Command::FAILURE;
+		}
+
 		$output->writeln( sprintf( '<info>Checklist issue #%d created successfully.</info> <comment>https://github.com/a8cteam51/%s/issues/%d</comment>', $response->number, $this->gh_repository->name, $response->number ) );
 		return Command::SUCCESS;
 	}

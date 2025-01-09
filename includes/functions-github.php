@@ -286,17 +286,12 @@ function create_github_issue( string $repository, string $title, string $issue_b
  * @param   string $repository The name of the repository to create the issue in.
  * @param   int    $issue_number      The number of the parent issue to create the sub-issue for.
  * @param   int    $sub_issue_id      The ID of the sub-issue to create.
- * @param   string $title      The title of the issue to create.
- * @param   string $issue_body The body of the issue to create.
- * @param   array  $labels     The labels to add to the issue.
+ *
  * @return  stdClass|null
  */
-function create_github_sub_issue( string $repository, int $issue_number, int $sub_issue_id, string $title, string $issue_body, array $labels = array() ): ?stdClass {
+function create_github_sub_issue( string $repository, int $issue_number, int $sub_issue_id ): ?stdClass {
 	$body = array(
-		'title'  => $title,
 		'sub_issue_id' => $sub_issue_id,
-		'body'   => $issue_body,
-		'labels' => $labels,
 	);
 
 	return API_Helper::make_github_request(
