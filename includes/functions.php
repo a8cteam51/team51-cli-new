@@ -42,6 +42,8 @@ function get_remote_content( string $url, array $headers = array(), string $meth
 
 	$result = file_get_contents( $url, false, $context );
 	if ( false === $result ) {
+		console_writeln( encode_json_content( error_get_last() ) );
+		console_writeln( "This should never happen as long as you are connected to the Internet. Please report this error." );
 		return null;
 	}
 
