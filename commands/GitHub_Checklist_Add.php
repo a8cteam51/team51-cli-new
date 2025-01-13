@@ -50,8 +50,8 @@ final class GitHub_Checklist_Add extends Command {
 			'description' => 'This site is an a8c property or product website.',
 		),
 		'partner-pays-wpcom'           => array(
-			'question'    => 'Will the partner be paying WordPress.com for hosting?',
-			'description' => 'The partner will be paying WordPress.com for hosting.',
+			'question'    => 'Will the partner pay for their plans and subscriptions?',
+			'description' => 'The partner will be paying for their plans and subscriptions.',
 		),
 		'retain-jetpack-likes'         => array(
 			'question'    => 'Will Jetpack likes need to be retained during migration?',
