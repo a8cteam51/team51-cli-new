@@ -50,8 +50,8 @@ final class GitHub_Checklist_Add extends Command {
 			'description' => 'This site is an a8c property or product website.',
 		),
 		'partner-pays-wpcom'           => array(
-			'question'    => 'Will the partner be paying WordPress.com for hosting?',
-			'description' => 'The partner will be paying WordPress.com for hosting.',
+			'question'    => 'Will the partner pay for their plans and subscriptions?',
+			'description' => 'The partner will be paying for their plans and subscriptions.',
 		),
 		'retain-jetpack-likes'         => array(
 			'question'    => 'Will Jetpack likes need to be retained during migration?',
@@ -196,9 +196,17 @@ final class GitHub_Checklist_Add extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
-		$tags      = implode( ', ', array_keys( array_filter( $this->conditional_tags ) ) );
-		$skip_text = $this->skip_issue ? ' (Checklist text will be output to the terminal instead of creating an issue.)' : '';
-		$question  = new ConfirmationQuestion( "<question>Are you sure you want to add the {$this->checklist_slug} checklist to the {$this->gh_repository->full_name} repository on host " . self::HOSTS[ $this->host ] . " with these tags: {$tags}? [y/N]{$skip_text}</question> ", false );
+		$tags = implode( ', ', array_keys( array_filter( $this->conditional_tags ) ) );
+		$output->writeln( "<fg=green;options=bold>Adding the {$this->checklist_slug} checklist to the {$this->gh_repository->full_name} repository on " . self::HOSTS[ $this->host ] . '</>' );
+		foreach ( $this->conditional_tags as $tag => $set ) {
+			if ( $set ) {
+				$output->writeln( '<fg=green;options=bold>- ' . self::CONDITIONAL_TAGS[ $tag ]['description'] . '(' . $tag . ')</>' );
+			}
+		}
+		if ( $this->skip_issue ) {
+			$output->writeln( '<fg=red;options=bold>- Checklist text will be output to the terminal instead of creating an issue.</>' );
+		}
+		$question = new ConfirmationQuestion( '<question>Do you want to continue? [y/N]</question> ', false );
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
