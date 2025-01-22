@@ -24,7 +24,7 @@ if ( ! empty( getenv( 'TEAM51_OPSOASIS_APP_PASSWORD' ) ) ) {
 	);
 
 	foreach ( $team51_op_logins as $op_login ) {
-		foreach ( $op_login->urls as $url ) {
+		foreach ( $op_login->urls ?? array() as $url ) {
 			if ( 'opsoasis.wpspecialprojects.com' !== parse_url( $url->href, PHP_URL_HOST ) ) {
 				continue;
 			}
@@ -46,6 +46,6 @@ if ( ! defined( 'OPSOASIS_WP_USERNAME' ) || empty( OPSOASIS_WP_USERNAME ) ) {
 	exit( 1 );
 }
 if ( ! defined( 'OPSOASIS_APP_PASSWORD' ) || empty( OPSOASIS_APP_PASSWORD ) ) {
-	console_writeln( 'Could not find the Team51 identity\'s app password. Aborting!' );
+	console_writeln( 'Could not find the OpsOasis app password. Aborting!' );
 	exit( 1 );
 }

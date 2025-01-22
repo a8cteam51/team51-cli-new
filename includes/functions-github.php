@@ -124,6 +124,32 @@ function create_github_repository_webhook( string $repository, array $config, ar
 	);
 }
 
+/**
+ * Lists all secrets available in a repository without revealing their encrypted values.
+ *
+ * @param   string $repository The name of the repository. The name is not case-sensitive.
+ *
+ * @return  object[]|null
+ */
+function get_github_repository_secrets( string $repository ): ?array {
+	return API_Helper::make_github_request( "repositories/$repository/secrets" )?->records;
+}
+
+/**
+ * Creates or updates a repository secret.
+ *
+ * @param   string $repository   The name of the repository. The name is not case-sensitive.
+ * @param   string $secret_name  The name of the secret.
+ * @param   string $secret_value The plaintext value of the secret. You can pass the name of a constant available on OpsOasis to use its value. OpsOasis will handle the encryption process.
+ *
+ * @link    https://docs.github.com/en/rest/actions/secrets#create-or-update-a-repository-secret
+ *
+ * @return  stdClass|null
+ */
+function set_github_repository_secret( string $repository, string $secret_name, string $secret_value ): ?stdClass {
+	return API_Helper::make_github_request( "repositories/$repository/secrets/$secret_name", 'PUT', array( 'value' => $secret_value ) );
+}
+
 // endregion
 
 // region CONSOLE
@@ -131,19 +157,16 @@ function create_github_repository_webhook( string $repository, array $config, ar
 /**
  * Grabs a value from the console input and validates it as a valid identifier for a GitHub repository.
  *
- * @param   InputInterface  $input         The console input.
- * @param   OutputInterface $output        The console output.
- * @param   callable|null   $no_input_func The function to call if no input is given.
- * @param   string          $name          The name of the value to grab.
+ * @param   InputInterface $input         The console input.
+ * @param   callable|null  $no_input_func The function to call if no input is given.
+ * @param   string         $name          The name of the value to grab.
  *
  * @return  stdClass
  */
-function get_github_repository_input( InputInterface $input, OutputInterface $output, ?callable $no_input_func = null, string $name = 'repository' ): stdClass {
-	$repository = maybe_get_github_repository_input( $input, $output, $no_input_func, $name );
-
+function get_github_repository_input( InputInterface $input, ?callable $no_input_func = null, string $name = 'repository' ): stdClass {
+	$repository = maybe_get_github_repository_input( $input, $no_input_func, $name );
 	if ( is_null( $repository ) ) {
-		$output->writeln( '<error>Invalid repository. Aborting!</error>' );
-		exit( 1 );
+		throw new InvalidArgumentException( 'Invalid GitHub repository.' );
 	}
 
 	return $repository;
@@ -153,23 +176,21 @@ function get_github_repository_input( InputInterface $input, OutputInterface $ou
  * Grabs a value from the console input and validates it as a valid identifier for a GitHub repository.
  * If the input is empty, returns null.
  *
- * @param   InputInterface  $input         The console input.
- * @param   OutputInterface $output        The console output.
- * @param   callable|null   $no_input_func The function to call if no input is given.
- * @param   string          $name          The name of the value to grab.
+ * @param   InputInterface $input         The console input.
+ * @param   callable|null  $no_input_func The function to call if no input is given.
+ * @param   string         $name          The name of the value to grab.
  *
  * @return  stdClass|null
  */
-function maybe_get_github_repository_input( InputInterface $input, OutputInterface $output, ?callable $no_input_func = null, string $name = 'repository' ): ?stdClass {
-	$slug = maybe_get_string_input( $input, $output, $name, $no_input_func );
+function maybe_get_github_repository_input( InputInterface $input, ?callable $no_input_func = null, string $name = 'repository' ): ?stdClass {
+	$slug = maybe_get_string_input( $input, $name, $no_input_func );
 	if ( is_null( $slug ) ) {
 		return null;
 	}
 
 	$repository = get_github_repository( $slug );
 	if ( is_null( $repository ) ) {
-		$output->writeln( '<error>Invalid repository. Aborting!</error>' );
-		exit( 1 );
+		throw new InvalidArgumentException( 'Invalid GitHub repository.' );
 	}
 
 	return $repository;
@@ -214,32 +235,6 @@ function parse_github_remote_repository_url( string $url ): ?stdClass {
 }
 
 /**
- * Lists all secrets available in a repository without revealing their encrypted values.
- *
- * @param   string $repository The name of the repository. The name is not case-sensitive.
- *
- * @return  object[]|null
- */
-function get_github_repository_secrets( string $repository ): ?array {
-	return API_Helper::make_github_request( "repositories/$repository/secrets" )?->records;
-}
-
-/**
- * Creates or updates a repository secret.
- *
- * @param   string $repository   The name of the repository. The name is not case-sensitive.
- * @param   string $secret_name  The name of the secret.
- * @param   string $secret_value The plaintext value of the secret. You can pass the name of a constant available on OpsOasis to use its value. OpsOasis will handle the encryption process.
- *
- * @link    https://docs.github.com/en/rest/actions/secrets#create-or-update-a-repository-secret
- *
- * @return  stdClass|null
- */
-function set_github_repository_secret( string $repository, string $secret_name, string $secret_value ): ?stdClass {
-	return API_Helper::make_github_request( "repositories/$repository/secrets/$secret_name", 'PUT', array( 'value' => $secret_value ) );
-}
-
-/**
  * Returns the GitHub repository for a given DeployHQ project.
  *
  * @param   string $project The permalink of the project to get the GitHub repository for.
@@ -258,6 +253,52 @@ function get_github_repository_from_deployhq_project( string $project ): ?stdCla
 	}
 
 	return get_github_repository( $gh_repo_url->repo );
+}
+
+/**
+ * Creates a new issue in a given GitHub repository.
+ *
+ * @param   string $repository The name of the repository to create the issue in.
+ * @param   string $title      The title of the issue to create.
+ * @param   string $issue_body The body of the issue to create.
+ * @param   array  $labels     The labels to add to the issue.
+ *
+ * @return  stdClass|null
+ */
+function create_github_issue( string $repository, string $title, string $issue_body, array $labels = array() ): ?stdClass {
+	$body = array(
+		'repo'   => $repository,
+		'title'  => $title,
+		'body'   => $issue_body,
+		'labels' => $labels,
+	);
+
+	return API_Helper::make_github_request(
+		"repositories/{$repository}/issues",
+		'POST',
+		$body,
+	);
+}
+
+/**
+ * Creates a new sub-issue in a given GitHub repository.
+ *
+ * @param   string $repository The name of the repository to create the issue in.
+ * @param   int    $issue_number      The number of the parent issue to create the sub-issue for.
+ * @param   int    $sub_issue_id      The ID of the sub-issue to create.
+ *
+ * @return  stdClass|null
+ */
+function create_github_sub_issue( string $repository, int $issue_number, int $sub_issue_id ): ?stdClass {
+	$body = array(
+		'sub_issue_id' => $sub_issue_id,
+	);
+
+	return API_Helper::make_github_request(
+		"repositories/{$repository}/issues/{$issue_number}/sub_issue",
+		'POST',
+		$body,
+	);
 }
 
 // endregion

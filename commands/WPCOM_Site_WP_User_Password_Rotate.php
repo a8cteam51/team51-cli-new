@@ -13,17 +13,17 @@ use Symfony\Component\Console\Question\Question;
 use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
 
 /**
- * Rotates the WP password of users on Pressable sites.
+ * Rotates the WP password of users on WPCOM sites.
  */
-#[AsCommand( name: 'pressable:rotate-site-wp-user-password' )]
-final class Pressable_Site_WP_User_Password_Rotate extends Command {
+#[AsCommand( name: 'wpcom:rotate-site-wp-user-password' )]
+final class WPCOM_Site_WP_User_Password_Rotate extends Command {
 	use AutocompleteTrait;
 
 	// region FIELDS AND CONSTANTS
 
 	/**
 	 * Whether processing multiple sites or just a single given one.
-	 * Can be one of 'all', 'related', or a comma-separated list of site IDs or domains.
+	 * Can be one of 'all' or 'related', if set.
 	 *
 	 * @var string|null
 	 */
@@ -58,13 +58,13 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function configure(): void {
-		$this->setDescription( 'Rotates the WordPress user password of a given user on Pressable sites.' )
-			->setHelp( 'This command allows you to rotate the WP password of users on Pressable sites. Finally, it attempts to update the 1Password values of rotated passwords as well.' );
+		$this->setDescription( 'Rotates the WordPress user password of a given user on WPCOM sites.' )
+			->setHelp( 'This command allows you to rotate the WP password of users on WPCOM sites. Finally, it attempts to update the 1Password values of rotated passwords as well.' );
 
-		$this->addArgument( 'site', InputArgument::OPTIONAL, 'The domain or numeric Pressable ID of the site on which to rotate the WP user password.' )
+		$this->addArgument( 'site', InputArgument::OPTIONAL, 'The domain or numeric WPCOM ID of the site on which to rotate the WP user password.' )
 			->addOption( 'user', 'u', InputOption::VALUE_REQUIRED, 'The email of the site WP user for which to rotate the password. The default is concierge@wordpress.com.' );
 
-		$this->addOption( 'multiple', null, InputOption::VALUE_REQUIRED, 'Determines whether the `site` argument is optional or not. Accepted values are `related`, `all`, or a comma-separated list of site IDs or domains.' )
+		$this->addOption( 'multiple', null, InputOption::VALUE_REQUIRED, 'Determines whether the `site` argument is optional or not. Accepted values are `all` or a comma-separated list of site IDs or URLs.' )
 			->addOption( 'dry-run', null, InputOption::VALUE_NONE, 'Execute a dry run. It will output all the steps, but will keep the current WP user password. Useful for checking whether a given input is valid.' );
 	}
 
@@ -76,12 +76,11 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 		$this->dry_run  = get_bool_input( $input, 'dry-run' );
 		$this->multiple = $input->getOption( 'multiple' );
 
-		// If processing a given site, retrieve it from the input.
+		// If processing a given site or list of sites, retrieve it from the input.
 		$site = match ( true ) {
 			'all' === $this->multiple => null,
-			'related' === $this->multiple => get_pressable_site_input( $input, fn() => $this->prompt_site_input( $input, $output ) ),
-			null === $this->multiple => get_pressable_site_input( $input, fn() => $this->prompt_site_input( $input, $output ) ),
-			default => null,
+			null !== $this->multiple => null,
+			default => get_wpcom_site_input( $input, fn() => $this->prompt_site_input( $input, $output ) ),
 		};
 		$input->setArgument( 'site', $site );
 
@@ -91,42 +90,39 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 
 		// Compile the lists of sites to process.
 		$this->sites = match ( true ) {
-			'all' === $this->multiple => get_pressable_sites(),
-			'related' === $this->multiple => \array_merge( ...get_pressable_related_sites( $site->id ) ),
-			null === $this->multiple => array( $site ),
-			default => $this->get_sites_from_multiple_input(),
+			'all' === $this->multiple => get_wpcom_sites( array( 'fields' => 'ID,URL,name,is_wpcom_atomic,jetpack' ) ),
+			null !== $this->multiple => array_map( fn( $s ) => get_wpcom_site( $s ), explode( ',', $this->multiple ) ),
+			default => array( $site ),
 		};
+		$this->sites = array_filter( $this->sites, static fn( $site ) => $site && $site->is_wpcom_atomic );
+
+		if ( empty( $this->sites ) ) {
+			$output->writeln( '<error>No valid WordPress.com Atomic sites found.</error>' );
+			exit( 1 );
+		}
 	}
 
 	/**
 	 * {@inheritDoc}
 	 */
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
-		switch ( true ) {
-			case 'all' === $this->multiple:
-				$question = new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on <fg=red;options=bold>ALL</> sites? [y/N]</question> ", false );
-				break;
-			case 'related' === $this->multiple:
-				output_pressable_related_sites( $output, get_pressable_related_sites( $this->sites[0]->id ) );
-				$question = new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on all the sites listed above? [y/N]</question> ", false );
-				break;
-			case null !== $this->multiple:
-				$question = new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on <fg=red;options=bold>" . count( $this->sites ) . ' selected</> sites? [y/N]</question> ', false );
-				break;
-			default:
-				$question = new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on {$this->sites[0]->displayName} (ID {$this->sites[0]->id}, URL {$this->sites[0]->url})? [y/N]</question> ", false );
-		}
+		$site_count = count( $this->sites );
+		$question   = match ( true ) {
+			'all' === $this->multiple => new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on <fg=red;options=bold>ALL</> sites? [y/N]</question> ", false ),
+			$site_count > 1 => new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on <fg=red;options=bold>{$site_count}</> sites? [y/N]</question> ", false ),
+			default => new ConfirmationQuestion( "<question>Are you sure you want to rotate the WP user password of {$input->getOption( 'user' )} on {$this->sites[0]->name} (ID {$this->sites[0]->ID}, URL {$this->sites[0]->URL})? [y/N]</question> ", false ),
+		};
 
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
 		}
 
-		if ( 'all' === $this->multiple && false === $this->dry_run ) {
-			$question = new ConfirmationQuestion( '<question>This is <fg=red;options=bold>NOT</> a dry run. Are you sure you want to continue rotating the password of the WP user on all sites? [y/N]</question> ', false );
+		if ( ( 'all' === $this->multiple || $site_count > 1 ) && false === $this->dry_run ) {
+			$question = new ConfirmationQuestion( "<question>This is <fg=red;options=bold>NOT</> a dry run. Are you sure you want to continue rotating the password of the WP user on {$site_count} sites? [y/N]</question> ", false );
 			if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 				$output->writeln( '<comment>Command aborted by user.</comment>' );
-				exit( 2 );
+					exit( 2 );
 			}
 		}
 	}
@@ -138,10 +134,10 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
 		foreach ( $this->sites as $site ) {
-			$output->writeln( "<fg=magenta;options=bold>Rotating the WP user password of $this->wp_user_email on $site->displayName (ID $site->id, URL $site->url).</>" );
+			$output->writeln( "<fg=magenta;options=bold>Rotating the WP user password of $this->wp_user_email on $site->name (ID $site->ID, URL $site->URL).</>" );
 
 			// Rotate the WP user password.
-			$credentials = $this->rotate_site_wp_user_password( $output, $site->id );
+			$credentials = $this->rotate_site_wp_user_password( $output, $site->ID );
 			if ( \is_null( $credentials ) ) {
 				$output->writeln( '<error>Failed to rotate the WP user password.</error>' );
 				continue;
@@ -179,7 +175,7 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 	private function prompt_site_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Enter the site ID or URL to rotate the WP user password on:</question> ' );
 		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			$question->setAutocompleterValues( \array_column( get_pressable_sites( include_aliases: true ) ?? array(), 'url' ) );
+			$question->setAutocompleterValues( \array_column( get_wpcom_sites( array( 'fields' => 'ID,URL' ) ) ?? array(), 'url' ) );
 		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
@@ -195,14 +191,11 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 	 */
 	private function prompt_user_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Enter the email of the WP user to rotate the password for [concierge@wordpress.com]:</question> ', 'concierge@wordpress.com' );
-		if ( ! $input->getOption( 'no-autocomplete' ) ) {
-			if ( is_null( $this->multiple ) || 'related' === $this->multiple ) {
-				$site = get_pressable_site( $input->getArgument( 'site' )->id );
-				if ( ! \is_null( $site ) ) {
-					$question->setAutocompleterValues( \array_map( static fn( object $wp_user ) => $wp_user->email, get_wpcom_site_users( $site->url ) ?? array() ) );
-				}
+		if ( 'all' !== $this->multiple && ! $input->getOption( 'no-autocomplete' ) ) {
+			$site = $input->getArgument( 'site' );
+			if ( ! \is_null( $site ) ) {
+				$question->setAutocompleterValues( \array_map( static fn( object $wp_user ) => $wp_user->email, get_wpcom_site_users( $site->ID ) ?? array() ) );
 			}
-			// For 'all' or custom list of sites, we don't provide autocomplete suggestions
 		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
@@ -224,7 +217,7 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 			);
 			$output->writeln( '<comment>Dry run: WP user password rotation skipped.</comment>', OutputInterface::VERBOSITY_VERBOSE );
 		} else {
-			$credentials = rotate_pressable_site_wp_user_password( $site_id, $this->wp_user_email );
+			$credentials = rotate_wpcom_site_wp_user_password( $site_id, $this->wp_user_email );
 		}
 
 		return $credentials;
@@ -234,7 +227,7 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 	 * Updates the 1Password entry for the WP user and site.
 	 *
 	 * @param   OutputInterface $output   The output object.
-	 * @param   object          $site     The Pressable site object.
+	 * @param   object          $site     The WPCOM site object.
 	 * @param   string          $password The password to set.
 	 * @param   string|null     $username The username of the WP user, if known.
 	 *
@@ -243,20 +236,21 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 	private function update_1password_login( OutputInterface $output, object $site, string $password, ?string $username = null ): ?bool {
 		// Find matching 1Password entries for the WP user and site.
 		$op_login_entries = search_1password_items(
-			fn( object $op_login ) => $this->match_1password_login_entry( $op_login, $site->url, $username ),
+			// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+			fn( object $op_login ) => $this->match_1password_login_entry( $op_login, $site->URL, $username ),
 			array(
 				'categories' => 'login',
 				'tags'       => 'team51-cli',
 			)
 		);
 		if ( 1 < \count( $op_login_entries ) ) {
-			$output->writeln( "<error>Multiple 1Password login entries found for $this->wp_user_email on $site->displayName (ID $site->id, URL $site->url).</error>" );
+			$output->writeln( "<error>Multiple 1Password login entries found for $this->wp_user_email on $site->name (ID $site->ID, URL $site->URL).</error>" );
 			return false;
 		}
 
 		// Create or update the entry.
 		if ( 0 === \count( $op_login_entries ) ) {
-			$output->writeln( "<info>Creating 1Password login entry for <fg=cyan;options=bold>$this->wp_user_email</> on <fg=cyan;options=bold>$site->displayName</>.</info>", OutputInterface::VERBOSITY_DEBUG );
+			$output->writeln( "<info>Creating 1Password login entry for <fg=cyan;options=bold>$this->wp_user_email</> on <fg=cyan;options=bold>$site->name</>.</info>", OutputInterface::VERBOSITY_DEBUG );
 
 			$result = create_1password_item(
 				array(
@@ -265,8 +259,8 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 				),
 				\array_filter(
 					array(
-						'title'    => $site->displayName, // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-						'url'      => "https://$site->url/wp-admin",
+						'title'    => $site->name, // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+						'url'      => "$site->URL/wp-admin",
 						'category' => 'login',
 						'tags'     => 'team51-cli',
 						// Store in the shared vault if the user is the concierge, otherwise default to the private vault.
@@ -291,8 +285,8 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 					'password' => $password,
 				),
 				array(
-					'title' => $site->displayName, // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-					'url'   => "https://$site->url/wp-admin",
+					'title' => $site->name, // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+					'url'   => "$site->URL/wp-admin",
 				),
 				array(),
 				$this->dry_run
@@ -334,16 +328,6 @@ final class Pressable_Site_WP_User_Password_Rotate extends Command {
 		}
 
 		return $result;
-	}
-
-	/**
-	 * Get sites from the multiple input option.
-	 *
-	 * @return array
-	 */
-	private function get_sites_from_multiple_input(): array {
-		$site_identifiers = array_map( 'trim', explode( ',', $this->multiple ) );
-		return array_filter( array_map( fn( $identifier ) => get_pressable_site( $identifier ), $site_identifiers ) );
 	}
 
 	// endregion

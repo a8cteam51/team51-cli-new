@@ -61,7 +61,7 @@ final class Jetpack_Site_Plugins_Export extends Command {
 
 		$this->addArgument( 'site', InputArgument::OPTIONAL, 'Domain or WPCOM ID of the site to list the plugins for.' );
 
-		$this->addOption( 'multiple', null, InputOption::VALUE_REQUIRED, 'Determines whether the `site` argument is optional or not. Accepted value is `all`.' )
+		$this->addOption( 'multiple', null, InputOption::VALUE_REQUIRED, 'Determines whether the `site` argument is optional or not. Accepted values are `all` or a comma-separated list of site IDs or domains.' )
 			->addOption( 'destination', 'd', InputOption::VALUE_REQUIRED, 'The destination file to export the plugins to.' );
 	}
 
@@ -70,48 +70,28 @@ final class Jetpack_Site_Plugins_Export extends Command {
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
 		// Open the destination file for writing.
-		$this->destination = get_string_input( $input, $output, 'destination', fn() => $this->prompt_destination_input( $input, $output ) );
+		$this->destination = get_string_input( $input, 'destination', fn() => $this->prompt_destination_input( $input, $output ) );
 		$this->stream      = get_file_handle( $this->destination, 'csv' );
 
-		// If processing a given site, retrieve it from the input.
-		$multiple = get_enum_input( $input, $output, 'multiple', array( 'all' ) );
-		if ( 'all' !== $multiple ) {
-			$site = get_wpcom_site_input( $input, $output, fn() => $this->prompt_site_input( $input, $output ) );
+		$multiple = $input->getOption( 'multiple' );
+		if ( null === $multiple ) {
+			// Single site operation
+			$site = get_wpcom_site_input( $input, fn() => $this->prompt_site_input( $input, $output ) );
 			$input->setArgument( 'site', $site );
-
 			$this->sites = array(
 				$site->ID => (object) array(
 					'userblog_id' => $site->ID,
 					'siteurl'     => $site->URL, // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 				),
 			);
+		} elseif ( 'all' === $multiple ) {
+			// All sites
+			$this->sites = $this->get_all_sites();
 		} else {
-			$this->sites = \array_filter(
-				\array_map(
-					static function ( \stdClass $site ) {
-						$exclude_domains = array(
-							'mystagingwebsite.com',
-							'go-vip.co',
-							'wpcomstaging.com',
-							'wpengine.com',
-							'jurassic.ninja',
-							'atomicsites.blog',
-							'woocommerce.com',
-							'woo.com',
-						);
-
-						foreach ( $exclude_domains as $exclude_domain ) {
-							if ( \str_contains( $site->siteurl, $exclude_domain ) ) {
-								return null;
-							}
-						}
-
-						return $site;
-					},
-					get_wpcom_jetpack_sites()
-				)
-			);
+			// Comma-separated list of sites
+			$this->sites = $this->get_sites_from_multiple_input( $multiple );
 		}
+
 		$output->writeln( '<comment>Successfully fetched ' . \count( $this->sites ) . ' Jetpack site(s).</comment>' );
 
 		// Compile the list of plugins to process.
@@ -177,9 +157,68 @@ final class Jetpack_Site_Plugins_Export extends Command {
 	 */
 	private function prompt_site_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Enter the domain or WPCOM site ID to export the plugins for:</question> ' );
-		$question->setAutocompleterValues( \array_column( get_wpcom_jetpack_sites() ?? array(), 'domain' ) );
+		if ( ! $input->getOption( 'no-autocomplete' ) ) {
+			$question->setAutocompleterValues( array_column( get_wpcom_jetpack_sites() ?? array(), 'domain' ) );
+		}
 
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
+	}
+
+	/**
+	 * Get all sites, excluding certain domains.
+	 *
+	 * @return array
+	 */
+	private function get_all_sites(): array {
+		return \array_filter(
+			\array_map(
+				static function ( \stdClass $site ) {
+					$exclude_domains = array(
+						'mystagingwebsite.com',
+						'go-vip.co',
+						'wpcomstaging.com',
+						'wpengine.com',
+						'jurassic.ninja',
+						'atomicsites.blog',
+						'woocommerce.com',
+						'woo.com',
+					);
+
+					foreach ( $exclude_domains as $exclude_domain ) {
+						if ( \str_contains( $site->siteurl, $exclude_domain ) ) {
+							return null;
+						}
+					}
+
+					return $site;
+				},
+				get_wpcom_jetpack_sites()
+			)
+		);
+	}
+
+	/**
+	 * Get sites from the multiple input option.
+	 *
+	 * @param   string $multiple The multiple input option.
+	 *
+	 * @return  array
+	 */
+	private function get_sites_from_multiple_input( string $multiple ): array {
+		// Comma-separated list of sites
+		$site_identifiers = array_map( 'trim', explode( ',', $multiple ) );
+		$sites            = array();
+		foreach ( $site_identifiers as $identifier ) {
+			$site = get_wpcom_site( $identifier );
+			if ( $site ) {
+				$sites[ $site->ID ] = (object) array(
+					'userblog_id' => $site->ID,
+					'siteurl'     => $site->URL, // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+				);
+			}
+		}
+
+		return $sites;
 	}
 
 	// endregion

@@ -8,16 +8,15 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ChoiceQuestion;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
 use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
 
 /**
- * Creates a new production site on Pressable.
+ * Creates a new production site on WPCOM.
  */
-#[AsCommand( name: 'pressable:create-site', aliases: array( 'pressable:create-production-site' ) )]
-final class Pressable_Site_Create extends Command {
+#[AsCommand( name: 'wpcom:create-site', aliases: array( 'wpcom:create-production-site' ) )]
+final class WPCOM_Site_Create extends Command {
 	use AutocompleteTrait;
 
 	// region FIELDS AND CONSTANTS
@@ -28,13 +27,6 @@ final class Pressable_Site_Create extends Command {
 	 * @var string|null
 	 */
 	private ?string $name = null;
-
-	/**
-	 * The datacenter to create the site in.
-	 *
-	 * @var string|null
-	 */
-	private ?string $datacenter = null;
 
 	/**
 	 * The GitHub repository to deploy to the site from.
@@ -51,11 +43,10 @@ final class Pressable_Site_Create extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function configure(): void {
-		$this->setDescription( 'Creates a new production site on Pressable.' )
-			->setHelp( 'Use this command to create a new production site on Pressable.' );
+		$this->setDescription( 'Creates a new production site on WordPress.com.' )
+			->setHelp( 'Use this command to create a new production site on WordPress.com.' );
 
 		$this->addArgument( 'name', InputArgument::REQUIRED, 'The name of the site to create. Probably the same as the project name.' )
-			->addOption( 'datacenter', null, InputArgument::OPTIONAL, 'The datacenter to create the site in. Defaults to `Dallas, Texas`.' )
 			->addOption( 'repository', null, InputOption::VALUE_REQUIRED, 'The GitHub repository to deploy to the site from.' );
 	}
 
@@ -63,11 +54,8 @@ final class Pressable_Site_Create extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
-		$this->name = slugify( get_string_input( $input, 'name', fn() => $this->prompt_name_input( $input, $output ) ) );
+		$this->name = str_replace( '-', '', slugify( get_string_input( $input, 'name', fn() => $this->prompt_name_input( $input, $output ) ) ) ); // No dashes allowed in site names.
 		$input->setArgument( 'name', $this->name );
-
-		$this->datacenter = get_enum_input( $input, 'datacenter', array_keys( get_pressable_datacenters() ), fn() => $this->prompt_datacenter_input( $input, $output ), 'DFW' );
-		$input->setOption( 'datacenter', $this->datacenter );
 
 		$repository          = maybe_get_string_input( $input, 'repository', fn() => $this->prompt_repository_input( $input, $output ) );
 		$this->gh_repository = $repository ? $this->create_or_get_repository( $input, $output, $repository ) : null;
@@ -78,8 +66,8 @@ final class Pressable_Site_Create extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function interact( InputInterface $input, OutputInterface $output ): void {
-		$repo_query = $this->gh_repository ? "and to connect it to the `{$this->gh_repository->full_name}` repository via DeployHQ" : 'without connecting it to a GitHub repository';
-		$question   = new ConfirmationQuestion( "<question>Are you sure you want to create a new Pressable site named `$this->name` in the $this->datacenter datacenter $repo_query? [y/N]</question> ", false );
+		$repo_query = $this->gh_repository ? "and to connect it to the `{$this->gh_repository->full_name}` repository via WPCOM GitHub Deployments" : 'without connecting it to a GitHub repository';
+		$question   = new ConfirmationQuestion( "<question>Are you sure you want to create a new WordPress.com site named `$this->name` $repo_query? [y/N]</question> ", false );
 		if ( true !== $this->getHelper( 'question' )->ask( $input, $output, $question ) ) {
 			$output->writeln( '<comment>Command aborted by user.</comment>' );
 			exit( 2 );
@@ -92,43 +80,65 @@ final class Pressable_Site_Create extends Command {
 	 * @noinspection PhpUnhandledExceptionInspection
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
-		$repo_text = $this->gh_repository ? "and connecting it to the `{$this->gh_repository->full_name}` repository via DeployHQ" : 'without connecting it to a GitHub repository';
-		$output->writeln( "<fg=magenta;options=bold>Creating new Pressable site named `$this->name` in the $this->datacenter datacenter $repo_text.</>" );
+		$repo_text = $this->gh_repository ? "and connecting it to the `{$this->gh_repository->full_name}` repository via WPCOM GitHub Deployments" : 'without connecting it to a GitHub repository';
+		$output->writeln( "<fg=magenta;options=bold>Creating new WordPress.com site named `$this->name` $repo_text.</>" );
 
-		// Create the site and wait for it to be deployed.
-		$site = create_pressable_site( "$this->name-production", $this->datacenter );
-		if ( \is_null( $site ) ) {
+		// Create the site and wait for it to be provisioned.
+		$agency_site = create_wpcom_site( $this->name );
+		if ( \is_null( $agency_site ) ) {
 			$output->writeln( '<error>Failed to create the site.</error>' );
 			return Command::FAILURE;
 		}
 
-		$site = wait_on_pressable_site_state( $site->id, 'deploying', $output );
-		if ( \is_null( $site ) ) {
+		$agency_site = wait_until_wpcom_agency_site_state( $agency_site->id, 'active', $output );
+		if ( \is_null( $agency_site ) ) {
 			$output->writeln( '<error>Failed to check on site deployment status.</error>' );
 			return Command::FAILURE;
 		}
 
-		wait_on_pressable_site_ssh( $site->id, $output )?->disconnect();
+		$output->writeln( "<comment>Agency site $agency_site->id successfully provisioned as WPCOM site {$agency_site->features->wpcom_atomic->blog_id}.</comment>" );
+
+		$transfer = wait_until_wpcom_site_transfer_state( $agency_site->features->wpcom_atomic->blog_id, 'complete', $output );
+		if ( \is_null( $transfer ) ) {
+			$output->writeln( '<error>Failed to check on site transfer status.</error>' );
+			return Command::FAILURE;
+		}
+
+		wait_on_wpcom_site_ssh( $transfer->blog_id, $output )?->disconnect();
+
+		// The site is ready but the API doesn't support setting the name during creation so we have to update it.
+		$update = update_wpcom_site( $transfer->blog_id, array( 'blogname' => "$this->name-production" ) );
+		if ( $update && isset( $update->blogname ) && "$this->name-production" === $update->blogname ) {
+			$output->writeln( "<fg=green;options=bold>WPCOM site $transfer->blog_id name successfully updated to `$this->name-production`. Site URL: $agency_site->url</>" );
+		} else {
+			$output->writeln( "<error>Failed to set site name. Site URL: $agency_site->url</error>" );
+		}
 
 		// Run a few commands to set up the site.
 		run_app_command(
-			Pressable_Site_WP_User_Password_Rotate::getDefaultName(),
+			WPCOM_Site_WP_User_Password_Rotate::getDefaultName(),
 			array(
-				'site'   => $site->id,
+				'site'   => $transfer->blog_id,
 				'--user' => 'concierge@wordpress.com',
 			)
 		);
-		run_pressable_site_wp_cli_command(
-			$site->id,
+		run_wpcom_site_wp_cli_command(
+			$transfer->blog_id,
 			'plugin install https://github.com/a8cteam51/plugin-autoupdate-filter/releases/latest/download/plugin-autoupdate-filter.zip --activate',
 		);
 
-		// Create a DeployHQ project and server for the site.
+		// Create a GitHub Deployment project for the site.
 		if ( ! \is_null( $this->gh_repository ) ) {
-			$deployhq_project = create_deployhq_project_for_pressable_site( $site, $this->gh_repository, $this->name );
-			if ( ! \is_null( $deployhq_project ) ) {
-				create_deployhq_project_server_for_pressable_site( $site, $deployhq_project, 'Production', 'trunk' );
-			}
+			run_app_command(
+				WPCOM_Site_Repository_Connect::getDefaultName(),
+				array(
+					'site'         => $transfer->blog_id,
+					'repository'   => $this->gh_repository->name,
+					'--branch'     => 'trunk',
+					'--target_dir' => '/wp-content/',
+					'--deploy'     => true,
+				)
+			);
 		}
 
 		$output->writeln( "<fg=green;options=bold>Site $this->name created successfully.</>" );
@@ -149,22 +159,6 @@ final class Pressable_Site_Create extends Command {
 	 */
 	private function prompt_name_input( InputInterface $input, OutputInterface $output ): ?string {
 		$question = new Question( '<question>Please enter the name of the site to create:</question> ' );
-		return $this->getHelper( 'question' )->ask( $input, $output, $question );
-	}
-
-	/**
-	 * Prompts the user for a datacenter.
-	 *
-	 * @param   InputInterface  $input  The input object.
-	 * @param   OutputInterface $output The output object.
-	 *
-	 * @return  string|null
-	 */
-	private function prompt_datacenter_input( InputInterface $input, OutputInterface $output ): ?string {
-		$choices = get_pressable_datacenters();
-
-		$question = new ChoiceQuestion( '<question>Please select the datacenter to create the site in [' . $choices['DFW'] . ']:</question> ', get_pressable_datacenters(), 'DFW' );
-		$question->setValidator( fn( $value ) => validate_user_choice( $value, $choices ) );
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
 	}
 
@@ -221,7 +215,7 @@ final class Pressable_Site_Create extends Command {
 					GitHub_Repository_Create::getDefaultName(),
 					array(
 						'name'                => $name,
-						'--homepage'          => "https://$name-production.mystagingwebsite.com",
+						'--homepage'          => "https://$name.wpcomstaging.com",
 						'--type'              => 'project',
 						'--custom-properties' => array(
 							"php-globals-long-prefix=$php_globals_long_prefix",
