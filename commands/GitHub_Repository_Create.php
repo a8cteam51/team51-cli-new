@@ -210,6 +210,9 @@ final class GitHub_Repository_Create extends Command {
 		if ( ! isset( $custom_properties['human-title'] ) ) {
 			$custom_properties['human-title'] = $this->name;
 		}
+		if ( ! isset( $custom_properties['parent-theme'] ) ) {
+			$custom_properties['parent-theme'] = $this->no_code_theme;
+		}
 		if ( ! isset( $custom_properties['php-globals-long-prefix'] ) ) {
 			$custom_properties['php-globals-long-prefix'] = \str_replace( '-', '_', $this->name );
 		}
@@ -225,6 +228,8 @@ final class GitHub_Repository_Create extends Command {
 	 *
 	 * @param InputInterface  $input  The input interface.
 	 * @param OutputInterface $output The output interface.
+	 *
+	 * @return void
 	 */
 	private function setup_no_code_theme( InputInterface $input, OutputInterface $output ): void {
 		$folders = get_a8c_theme_choices( $output );
@@ -287,10 +292,10 @@ final class GitHub_Repository_Create extends Command {
 		$copy_command = sprintf(
 			'cd %s && mkdir -p themes/%s && cp -r %s/%s/* themes/%s',
 			$temp_dir,
-			$this->name,
+			$this->no_code_theme,
 			dirname( TEAM51_CLI_ROOT_DIR ) . '/a8c-themes',
 			$this->no_code_theme,
-			$this->name
+			$this->no_code_theme
 		);
 
 		exec( $copy_command, $exec_output, $return_code );
