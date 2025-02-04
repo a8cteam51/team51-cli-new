@@ -11,7 +11,10 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
+use Symfony\Component\Process\Process;
+
 use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
+use WPCOMSpecialProjects\CLI\Helper\Parallel_Process;
 
 /**
  * Deletes a WP user from WPCOM sites.
@@ -21,7 +24,7 @@ use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
 #[AsCommand( name: 'wpcom:delete-site-wp-user' )]
 final class WPCOM_Site_WP_User_Delete extends Command {
 	use AutocompleteTrait;
-
+	use Parallel_Process;
 	// region FIELDS AND CONSTANTS
 
 	/**
@@ -118,7 +121,7 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 			$output->writeln( "<comment>There are $number_of_errors sites that could NOT be searched.</comment>" );
 			$output->writeln( '<fg=magenta;options=bold>Trying to connect to those sites using SSH.</>' );
 
-			$errors = $this->maybe_get_user_using_ssh( $output, $errors, $sites );
+			$errors = $this->_maybe_get_user_using_ssh( $output, $errors, $sites );
 		}
 
 		maybe_output_wpcom_failed_sites_table( $output, $errors, $sites, 'Sites that could NOT be searched' );
@@ -349,6 +352,129 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 		$output->writeln( "<comment>Connected to $ssh_sites sites using SSH.</comment>" );
 
 		return $failed_ssh_sites;
+	}
+
+	/**
+	 * Get sites from the multiple input option.
+	 *
+	 * @param   OutputInterface $output   The output interface.
+	 * @param   array           $sites_with_errors The sites with errors.
+	 * @param   array           $sites The sites.
+	 *
+	 * @return  array
+	 */
+	private function _maybe_get_user_using_ssh(OutputInterface $output, array $sites_with_errors, array $sites): array {
+
+		$start_time   = microtime( true );
+		$sites_hosted = array_reduce( $sites, static fn( $carry, $site ) => $carry + array( $site->ID => $site ), array() );
+		$task_count   = count( $sites_with_errors );
+		$max_parallel = 20;
+		$processes    = array();
+		$completed    = 0;
+		$results      = array();
+		$failed_sites = array();
+	
+		foreach ($sites_with_errors as $site_id => $site_error_data) {
+			$site    = $sites_hosted[ $site_id ];
+			$process = Process::fromShellCommandline(sprintf('php %s ssh-worker --site-id=%s --site-type=%s --email=%s --site-url=%s --quiet',
+				realpath(__DIR__ . '/../team51-cli.php'),
+				$site_id,
+				($site->is_wpcom_atomic ? 'wpcom' : 'pressable'),
+				$this->email,
+				$site->URL,
+			));
+			$process->setTimeout(null);
+			$process->start( function ( $type, $buffer ) use ( $output ) {
+				if ( Process::ERR === $type ) {
+					$output->writeln( "<error>ERROR: Buffer: $buffer</error>" );
+				} else {
+					$output->writeln( "Buffer: $buffer" );
+					$output->writeln( "Type: $type" );
+				}
+			});
+
+			$processes[$site_id] = $process;
+			$output->writeln(sprintf(
+				'Started process %s (PID: %s) - Active: %d',
+				$site_id,
+				$process->getPid(),
+				count($processes)
+			));
+	
+			$current_processes = count($processes);
+			while ($current_processes >= $max_parallel) {
+				$this->process_completed_tasks($processes, $results, $failed_sites, $output, $completed, $task_count);
+				usleep(50000);
+				$current_processes = count($processes);
+			}
+		}
+	
+		// Process remaining
+		while (!empty($processes)) {
+			$this->process_completed_tasks($processes, $results, $failed_sites, $output, $completed, $task_count);
+			usleep(50000);
+		}
+	
+		$end_time = microtime(true);
+		$duration = round($end_time - $start_time);
+
+		$hours = intval($duration / 3600);
+		$minutes = intval(($duration % 3600) / 60);
+		$seconds = intval($duration % 60);
+
+		$output->writeln(sprintf(
+			"\n⏱️ Total execution time: %02d:%02d:%02d",
+			$hours,
+			$minutes,
+			$seconds
+		));
+	
+		return $failed_sites;
+	}
+
+	private function process_completed_tasks(array &$processes, array &$results, array &$failed_sites, OutputInterface $output, int &$completed, int $task_count): void {
+		foreach ($processes as $index => $p) {
+			if (!$p->isRunning()) {
+				$process_output = $p->getOutput() ?: $p->getErrorOutput();
+				$result = json_decode($process_output, true);
+				
+				if ($result && !isset($result['error'])) {
+					$results[$index] = $result;
+				} else {
+					$failed_sites[$index] = $this->handle_process_result($result, $index);
+					
+					// Debug output
+					$output->writeln(sprintf(
+						'<error>Site %s failed: %s - %s</error>',
+						$index,
+						$result['error'] ?? 'SSH connection failed',
+						$result['details'] ?? 'No details available'
+					));
+				}
+				
+				unset($processes[$index]);
+				++$completed;
+				$output->writeln(sprintf(
+					'🔄 Progress: %d%% (%d/%d) - Completed: %s - %s',
+					intval(round(($completed / $task_count) * 100)),
+					$completed,
+					$task_count,
+					$index,
+					isset($result['error']) ? '❌' : '✅'
+				));
+			}
+		}
+	}
+
+	private function handle_process_result($result, $index) {
+		$error_message = $result['error'] ?? 'SSH connection failed';
+		$error_details = $result['details'] ?? 'No details available';
+
+		return (object)[
+			'error'   => $error_message,
+			'site_id' => $result['site_id'] ?? $index,
+			'errors'  => [$error_message . ': ' . $error_details]
+		];
 	}
 
 	/**
