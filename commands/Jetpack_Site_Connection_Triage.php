@@ -11,7 +11,9 @@ use Symfony\Component\Console\Question\Question;
 use WPCOMSpecialProjects\CLI\Helper\AutocompleteTrait;
 
 /**
- * Triages the connection status of a given list of sites
+ * Command to triage Jetpack connection issues across multiple sites and generate a detailed report.
+ *
+ * @since 1.0.0
  */
 #[AsCommand( name: 'jetpack:connection-triage' )]
 final class Jetpack_Site_Connection_Triage extends Command {
@@ -34,9 +36,42 @@ final class Jetpack_Site_Connection_Triage extends Command {
 		'jurassic.ninja',
 	);
 
+	/**
+	 * Configures the command definition, arguments and help documentation.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
 	protected function configure(): void {
 		$this->setDescription( 'Triages Jetpack connection issues for sites and generates a report.' )
-			->setHelp( 'Use this command to identify and analyze sites with Jetpack connection problems. It will check connection status and generate a CSV report with details about problematic connections. You can either provide a CSV of specific sites to check, or run it without arguments to check all connected Jetpack sites.' );
+			->setHelp(
+				<<<'EOT'
+Use this command to identify and analyze sites with Jetpack connection problems. It will check connection status and generate a CSV report with details about problematic connections.
+
+You can either provide a CSV of specific sites to check, or run it without arguments to check all connected Jetpack sites.
+
+<info>Examples:</info>
+  Check all Jetpack sites:
+    $ team51 jetpack:connection-triage
+
+  Check specific sites from a CSV:
+    $ team51 jetpack:connection-triage /path/to/sites.csv
+
+<info>CSV Format:</info>
+The input CSV should have 2 columns:
+- Column 1: Blog ID (numeric WordPress.com blog ID)
+- Column 2: Site URL (full URL including protocol)
+
+<info>Generated Report:</info>
+The command generates a CSV report with the following columns:
+- Site ID: The WordPress.com blog ID
+- Site URL: The site's URL
+- Status: HTTP status code from connection check
+- New Blog ID: If site has a new connection, the new blog ID
+- Notes: Detailed findings and recommended actions
+EOT
+			);
 
 		$this->addArgument(
 			'csv-path',
@@ -45,6 +80,16 @@ final class Jetpack_Site_Connection_Triage extends Command {
 		);
 	}
 
+	/**
+	 * Initializes the command by fetching the list of Jetpack sites if no CSV is provided.
+	 *
+	 * @since 1.0.0
+	 * @throws \RuntimeException When unable to fetch Jetpack sites.
+	 *
+	 * @param InputInterface  $input  Command input interface.
+	 * @param OutputInterface $output Command output interface.
+	 * @return void
+	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
 		if ( ! $input->getArgument( 'csv-path' ) ) {
 			$this->sites = get_wpcom_jetpack_sites();
@@ -53,7 +98,19 @@ final class Jetpack_Site_Connection_Triage extends Command {
 	}
 
 	/**
-	 * {@inheritDoc}
+	 * Executes the connection triage command.
+	 *
+	 * Processes either a provided CSV of sites or all Jetpack sites, checking their
+	 * connection status and generating a detailed report of findings.
+	 *
+	 * @since 1.0.0
+	 * @throws \RuntimeException When CSV file cannot be read or processed.
+	 * @throws \Exception When unable to create or write to output CSV file.
+	 *
+	 * @param InputInterface  $input  Command input interface.
+	 * @param OutputInterface $output Command output interface.
+	 *
+	 * @return int Command::SUCCESS on success, Command::FAILURE on failure
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
 		$broken_site_data = array();
@@ -101,16 +158,6 @@ final class Jetpack_Site_Connection_Triage extends Command {
 			}
 		}
 
-		// Helper function to check if domain is a staging domain
-		$is_staging_domain = function( $url ) {
-			foreach ( $this->staging_domains as $staging_domain ) {
-				if ( false !== strpos( $url, $staging_domain ) ) {
-					return true;
-				}
-			}
-			return false;
-		};
-
 		// Process each site through our connection check logic
 		foreach ( $sites_to_check as $site ) {
 			$site_id          = $site['blog_id'];
@@ -136,11 +183,11 @@ final class Jetpack_Site_Connection_Triage extends Command {
 			$headers     = parse_http_headers( $http_response_header );
 			$status_code = $headers['http_code'];
 
-			if ( 410 === $status_code && $is_staging_domain( $site_url ) ) {
+			if ( 410 === $status_code && $this->is_staging_domain( $site_url ) ) {
 				// Probably deactivated
 				$notes = 'Site is probably deactivated';
 				// Check Pressable?
-			} elseif ( 404 === $status_code && $is_staging_domain( $site_url ) ) {
+			} elseif ( 404 === $status_code && $this->is_staging_domain( $site_url ) ) {
 				// probably deleted or Jetpack not installed. Next step is to curl the homepage
 				//$notes = $result['body'];
 				$notes = '404, check site';
@@ -150,9 +197,9 @@ final class Jetpack_Site_Connection_Triage extends Command {
 			} elseif ( 500 === $status_code ) {
 				//$notes = $result['body'];
 				$notes = 'Check site, internal server error';
-			} elseif ( 200 === $status_code && ! $is_staging_domain( $site_url ) ) {
+			} elseif ( 200 === $status_code && ! $this->is_staging_domain( $site_url ) ) {
 				$notes = 'Site either moved hosts or has a new JP connection. Check DARC and NA: https://mc.a8c.com/tools/reportcard/domain/?domain=' . $domain . ' and https://wordpress.com/wp-admin/network/sites.php?s=' . $site_url;
-			} elseif ( 200 === $status_code && $is_staging_domain( $site_url ) ) {
+			} elseif ( 200 === $status_code && $this->is_staging_domain( $site_url ) ) {
 				// Check WPCOM API for site information
 				$wpcom_api_url = 'https://public-api.wordpress.com/rest/v1.1/sites/' . rawurlencode( $domain );
 				$wpcom_result  = @file_get_contents( $wpcom_api_url, false, $context );
@@ -200,6 +247,22 @@ final class Jetpack_Site_Connection_Triage extends Command {
 		$output->writeln( sprintf( '<info>Done, CSV saved to: %s</info>', $filepath ) );
 
 		return Command::SUCCESS;
+	}
+
+	/**
+	 * Checks if a given URL belongs to a known staging domain.
+	 *
+	 * @since 1.0.0
+	 * @param string $url The URL to check.
+	 * @return bool True if URL matches a staging domain, false otherwise.
+	 */
+	private function is_staging_domain( string $url ): bool {
+		foreach ( $this->staging_domains as $staging_domain ) {
+			if ( false !== strpos( $url, $staging_domain ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// endregion
