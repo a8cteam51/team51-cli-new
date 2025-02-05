@@ -217,7 +217,12 @@ final class WPCOM_Site_WP_User_Password_Rotate extends Command {
 			);
 			$output->writeln( '<comment>Dry run: WP user password rotation skipped.</comment>', OutputInterface::VERBOSITY_VERBOSE );
 		} else {
-			$credentials = rotate_wpcom_site_wp_user_password( $site_id, $this->wp_user_email );
+			try {
+				// TODO: This was a quick-and-dirty fix to make the `--multiple all` not stop on failure but we should investigate this.
+				$credentials = rotate_wpcom_site_wp_user_password( $site_id, $this->wp_user_email );
+			} catch ( \Exception $exception ) {
+				return null;
+			}
 		}
 
 		return $credentials;

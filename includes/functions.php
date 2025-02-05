@@ -40,9 +40,25 @@ function get_remote_content( string $url, array $headers = array(), string $meth
 	);
 	$context = stream_context_create( $options );
 
-	$result = file_get_contents( $url, false, $context );
-	if ( false === $result ) {
-		return null;
+	for ( $try = 0; true; $try++ ) {
+		$result = @file_get_contents( $url, false, $context );
+		if ( false !== $result ) {
+			break;
+		}
+
+		$last_error = error_get_last();
+		if ( str_contains( $last_error['message'], 'Failed to open stream: HTTP request failed!' ) ) {
+			if ( 3 <= $try ) {
+				console_writeln( "Failed to open stream: HTTP request failed for $url! Retried 3 times. Exiting..." );
+				exit( 1 );
+			} else {
+				console_writeln( "Failed to open stream: HTTP request failed for $url! Retrying in 5 seconds..." );
+				sleep( 5 );
+			}
+		} else {
+			console_writeln( encode_json_content( error_get_last() ) );
+			return null;
+		}
 	}
 
 	return array(
