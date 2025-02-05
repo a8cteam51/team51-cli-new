@@ -189,13 +189,11 @@ EOT
 				// Check Pressable?
 			} elseif ( 404 === $status_code && $this->is_staging_domain( $site_url ) ) {
 				// probably deleted or Jetpack not installed. Next step is to curl the homepage
-				//$notes = $result['body'];
 				$notes = '404, check site';
 				if ( strpos( $result, 'Domain not found' ) !== false ) {
 					$notes = 'Domain not found, probably deleted from Pressable';
 				}
 			} elseif ( 500 === $status_code ) {
-				//$notes = $result['body'];
 				$notes = 'Check site, internal server error';
 			} elseif ( 200 === $status_code && ! $this->is_staging_domain( $site_url ) ) {
 				$notes = 'Site either moved hosts or has a new JP connection. Check DARC and NA: https://mc.a8c.com/tools/reportcard/domain/?domain=' . $domain . ' and https://wordpress.com/wp-admin/network/sites.php?s=' . $site_url;
