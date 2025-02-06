@@ -2,14 +2,18 @@
 /**
  * SSH Worker Command
  *
- * Handles SSH execution for WordPress CLI operations.
+ * Handles SSH execution for WPCOM and Pressable sites.
+ *
+ * @package WPCOMSpecialProjects\CLI\Command
  */
+declare(strict_types=1);
+
 namespace WPCOMSpecialProjects\CLI\Command;
 
 use Symfony\Component\Console\{
-	Command\Command, 
-	Input\InputInterface, 
-	Input\InputOption, 
+	Command\Command,
+	Input\InputInterface,
+	Input\InputOption,
 	Output\OutputInterface,
 	Attribute\AsCommand
 };
@@ -19,21 +23,153 @@ use Pressable_Connection_Helper;
 use WPCOM_Connection_Helper;
 
 /**
+ * Site type enum
+ */
+enum SiteType: string {
+    case WPCOM = 'wpcom';
+    case PRESSABLE = 'pressable';
+
+    /**
+     * Get the display name for the site type
+     */
+    public function get_display_name(): string {
+        return match($this) {
+            self::WPCOM => 'WordPress.com',
+            self::PRESSABLE => 'Pressable',
+        };
+    }
+
+    /**
+     * Check if site type requires a site URL
+     */
+    public function requires_site_url(): bool {
+        return match($this) {
+            self::PRESSABLE => true,
+            default         => false,
+        };
+    }
+}
+
+/**
  * SSH Worker Command
  */
 #[AsCommand( name: 'ssh-worker', hidden: true )]
 class SSH_Worker extends Command {
+
+	// region FIELDS AND CONSTANTS
+
+	/**
+	 * Site UUID
+	 * 
+	 * @var string
+	 */
+	protected string $site_id;
+
+	/**
+	 * Site type i.e. wpcom or pressable
+	 * 
+	 * @var SiteType
+	 */
+    protected SiteType $site_type;
+
+	/**
+	 * Site URL
+	 * 
+	 * @var string|null
+	 */
+    protected ?string $site_url = null;
+
+	/**
+	 * Command to execute in shell
+	 * 
+	 * @var string
+	 */
+    protected string $shell_command;
+
+	/**
+	 * Timeout for SSH connection
+	 * 
+	 * @var int
+	 */
+    protected int $timeout = 60;
+
+	// endregion
+
+	// region INHERITED METHODS
 
 	/**
 	 * Configures the Symfony Console command.
 	 */
 	protected function configure(): void {
 		$this
-			->setDescription('SSH Worker for processing WordPress CLI commands')
-			->addOption('site-id', null, InputOption::VALUE_REQUIRED, 'The site ID')
-			->addOption('site-type', null, InputOption::VALUE_REQUIRED, 'Site type (wpcom or pressable)')
-			->addOption('email', null, InputOption::VALUE_REQUIRED, 'The email to query via WP CLI')
-			->addOption('site-url', null, InputOption::VALUE_OPTIONAL, 'The site url');
+			->setDescription( 'SSH Worker for processing shell commands' )
+			// Required.
+			->addOption( 'site-id', null, InputOption::VALUE_REQUIRED, 'The site ID' )
+			->addOption( 'site-type', null, InputOption::VALUE_REQUIRED, 'Site type (wpcom or pressable)' )
+			->addOption( 'shell-command', null, InputOption::VALUE_REQUIRED, 'The shell command to execute' )
+			// Optional.
+			->addOption( 'site-url', null, InputOption::VALUE_OPTIONAL, 'The site url' )
+			->addOption( 'timeout', null, InputOption::VALUE_OPTIONAL, 'The timeout for the SSH connection' );
+	}
+
+	/**
+	 * Initializes the command.
+	 *
+	 * @param InputInterface  $input  The input interface.
+	 * @param OutputInterface $output The output interface.
+	 *
+	 * @throws \InvalidArgumentException If required parameters are missing.
+	 */
+	protected function initialize( InputInterface $input, OutputInterface $output ): void {
+		$this->site_id = $input->getOption( 'site-id' );
+		$site_type_str = $input->getOption( 'site-type' );
+		
+		// Safely convert string to enum
+		$this->site_type = SiteType::tryFrom($site_type_str) 
+			?? throw new \InvalidArgumentException(
+				json_encode([
+					'error' => 'invalid_site_type',
+					'details' => "Site type must be one of: " . 
+						implode(', ', array_column(SiteType::cases(), 'value'))
+				])
+			);
+
+		// Use enum methods
+		if ($this->site_type->requires_site_url() && empty($input->getOption('site-url'))) {
+			throw new \InvalidArgumentException(
+				json_encode([
+					'error'   => 'missing_site_url',
+					'details' => $this->site_type->get_display_name() . ' sites require a site URL'
+				])
+			);
+		}
+
+		$this->site_url      = $input->getOption( 'site-url' );
+		$this->shell_command = $input->getOption( 'shell-command' );
+		$this->timeout       = $input->getOption( 'timeout' ) ?? 60;
+
+		if ( ! $this->site_id || ! $this->site_type ) {
+			throw new \InvalidArgumentException(
+				json_encode(
+					array(
+						'error'   => 'missing_required_parameters',
+						'site_id' => $this->site_id,
+						'details' => 'Required: site_id and site_type',
+					)
+				)
+			);
+		}
+		if ( ! $this->shell_command ) {
+			throw new \InvalidArgumentException(
+				json_encode(
+					array(
+						'error'   => 'missing_required_parameters',
+						'site_id' => $this->site_id,
+						'details' => 'Required: shell-command',
+					)
+				)
+			);
+		}
 	}
 
 	/**
@@ -45,123 +181,137 @@ class SSH_Worker extends Command {
 	 * @return int Command exit status.
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
-		$site_id = $input->getOption('site-id');
-		$site_type = $input->getOption('site-type');
-		$email = $input->getOption('email');
-		$site_url = $input->getOption('site-url');
-
-		if (!$site_id || !$site_type || !$email) {
-			echo json_encode([
-				'error'   => 'missing_required_parameters',
-				'site_id' => $site_id,
-				'details' => 'Required: site_id, site_type, email'
-			]);
-			return Command::FAILURE;
-		}
-
+		$emit = $this->emit( $this->site_id );
 		try {
 			$pressable_site_id = null;
-			if ($site_type !== 'wpcom') {
-				$domain = parse_url($site_url, PHP_URL_HOST);
+			echo json_encode([
+				'site_id' => $this->site_id,
+				'site_type' => $this->site_type->value,
+				'site_url' => $this->site_url,
+				'site_type_enum_pressable' => SiteType::PRESSABLE,
+			]);
+			if ( SiteType::PRESSABLE === $this->site_type->value ) {
 				try {
-					$pressable_site = get_pressable_site($site_url);
-					if (!$pressable_site) {
-						echo json_encode([
-							'error'   => 'get_pressable_site_not_found',
-							'site_id' => $site_id,
-							'details' => 'Error occurred while fetching Pressable site info for domain: ' . $domain
-						]);
-						return Command::FAILURE;
+					$pressable_site = get_pressable_site( $this->site_url );
+					if ( ! $pressable_site ) {
+						return $emit(
+							array(
+								'error'   => 'get_pressable_site_not_found',
+								'details' => 'Error occurred while fetching Pressable site info for domain: ' . $this->site_url,
+							)
+						);
 					}
 					$pressable_site_id = $pressable_site->id;
-				} catch (\Exception $e) {
-					echo json_encode([
-						'error'   => 'get_pressable_site_failed',
-						'site_id' => $site_id,
-						'details' => 'Error occurred while fetching Pressable site info for domain: ' . $domain
-					]);
-					return Command::FAILURE;
+				} catch ( \Exception $e ) {
+					return $emit(
+						array(
+							'error'   => 'get_pressable_site_failed',
+							'details' => 'Error occurred while fetching Pressable site info for domain: ' . $this->site_url,
+						)
+					);
 				}
 			}
 
-			$ssh = $this->get_ssh_connection($site_id, $site_type, $pressable_site_id);
-			if (!$ssh) {
-				echo json_encode([
-					'error'   => $site_type . '_ssh_failed', // wpcom_ssh_failed or pressable_ssh_failed
-					'site_id' => $site_id,
-					'details' => sprintf('Could not establish %s SSH connection', strtoupper($site_type))
-				]);
-				return Command::FAILURE;
+			$ssh = $this->get_ssh_connection( $this->site_id, $this->site_type->value, $pressable_site_id );
+			if ( ! $ssh ) {
+				return $emit(
+					array(
+						'error'   => $this->site_type->value . '_ssh_failed', // wpcom_ssh_failed or pressable_ssh_failed
+						'details' => sprintf( 'Could not establish %s SSH connection', strtoupper( $this->site_type->value ) ),
+					)
+				);
 			}
 
-			$ssh->setTimeout(60);
-			// TODO: Make dynamic.
-			$wp_cli_command = sprintf('wp user get %s --fields=ID,email --format=json', escapeshellarg($email));
-			$result = '';
+			$ssh->setTimeout( $this->timeout );
 			
+			$wp_cli_command = sprintf( $this->shell_command );
+			$result         = '';
+
 			try {
-				$ssh->exec($wp_cli_command, function($str) use (&$result) {
-					$result .= $str;
-				});
-			} catch (\Exception $e) {
-				echo json_encode([
-					'error'   => 'wp_cli_command_failed',
-					'site_id' => $site_id,
-					'details' => $e->getMessage()
-				]);
-				return Command::FAILURE;
+				$ssh->exec(
+					$wp_cli_command,
+					function ( $str ) use ( &$result ) {
+						$result .= $str;
+					}
+				);
+			} catch ( \Exception $e ) {
+				return $emit(
+					array(
+						'error'   => 'wp_cli_command_failed',
+						'details' => $e->getMessage(),
+					)
+				);
 			} finally {
 				$ssh->disconnect();
 			}
 
-			// TODO: Make dynamic.
-			if (str_contains($result, 'Error: Invalid user')) {
-				echo json_encode([
-					'code'    => 'user_not_found',
-					'site_id' => $site_id,
-					'details' => 'User not found'
-				]);
-				return Command::SUCCESS;
-			}
-
-			if (empty($result)) {
-				echo json_encode([
-					'error'   => 'empty_result',
-					'site_id' => $site_id,
-					'details' => 'No response received from WP-CLI command.'
-				]);
-				return Command::FAILURE;
+			if ( empty( $result ) ) {
+				return $emit(
+					array(
+						'error'   => 'empty_result',
+						'details' => 'No response received from shell command.',
+					)
+				);
 			}
 
 			// Only try to parse JSON if we don't have an error message
-			$data = json_decode($result, true);
-			// E.g. PHP errors from the SSH connection.
-			if (!$data) {
-				echo json_encode([
-					'error'   => 'invalid_json',
-					'site_id' => $site_id,
-					'details' => $result
-				]);
-				return Command::FAILURE;
+			$data = json_decode( $result, true );
+			if ( ! $data ) {
+				if ( str_contains( $result, 'Fatal error:' ) ) {
+					return $emit(
+						array(
+							'error'   => 'fatal_error',
+							'details' => 'Fatal error occurred at source while executing shell command.',
+						)
+					);
+				}
+				return $emit(
+					array(
+						'error'   => 'invalid_json',
+						'details' => $result,
+					)
+				);
 			}
 
-			echo json_encode([
-				'code'    => 'success',
-				'site_id' => $site_id,
-				'type'    => $site_type,
-				'data'    => $data
-			]);
-
-			return Command::SUCCESS;
-
-		} catch (\Exception $e) {
-			echo json_encode([
-				'error'   => 'unknown_error',
-				'site_id' => $site_id,
-				'details' => $e->getMessage()
-			]);
-			return Command::FAILURE;
+			return $emit(
+				array(
+					'code' => 'success',
+					'type' => $this->site_type,
+					'data' => $data,
+				),
+				false
+			);
+		} catch ( \Exception $e ) {
+			return $emit(
+				array(
+					'error'   => 'unknown_error',
+					'details' => $e->getMessage(),
+				)
+			);
 		}
+	}
+
+	// endregion
+
+	// region HELPERS
+
+	/**
+	 * Closure that buffers messages to output and returns a success or failure status.
+	 *
+	 * @param string $site_id The site ID.
+	 *
+	 * @return callable Returns a closure that buffers messages to output and returns a success or failure status.
+	 */
+	private function emit( $site_id ) {
+		return function ( $result, $failed = true ) use ( $site_id ) {
+			echo json_encode(
+				array(
+					...$result,
+					'site_id' => $site_id,
+				)
+			);
+			return $failed ? Command::FAILURE : Command::SUCCESS;
+		};
 	}
 
 	/**
@@ -173,15 +323,13 @@ class SSH_Worker extends Command {
 	 *
 	 * @return SSH2|null SSH connection instance or null if unavailable.
 	 */
-	protected function get_ssh_connection( string $site_id, string $site_type, ?string $pressable_id = null ): ?SSH2 {
-		if ( 'wpcom' === $site_type ) {
-			return WPCOM_Connection_Helper::get_ssh_connection( $site_id );
-		}
+	protected function get_ssh_connection(string $site_id, ?string $pressable_id = null): ?SSH2 {
+        return match($this->site_type->value) {
+            'wpcom'     => WPCOM_Connection_Helper::get_ssh_connection($site_id),
+            'pressable' => $pressable_id ? Pressable_Connection_Helper::get_ssh_connection($pressable_id) : null,
+            default     => null,
+        };
+    }
 
-		if ( $pressable_id ) {
-			return Pressable_Connection_Helper::get_ssh_connection( $pressable_id );
-		}
-
-		return null;
-	}
+	// endregion
 }
