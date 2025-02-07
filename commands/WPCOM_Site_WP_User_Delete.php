@@ -55,6 +55,13 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 	 */
 	private ?bool $dry_run = null;
 
+	/**
+	 * The timeout, in seconds, for the SSH connection process to run.
+	 *
+	 * @var int|null
+	 */
+	private ?int $ssh_timeout = null;
+
 	// endregion
 
 	// region INHERITED METHODS
@@ -70,13 +77,17 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 			->addArgument( 'site', InputArgument::OPTIONAL, 'The domain or WPCOM ID of the site to delete the user from.' );
 
 		$this->addOption( 'multiple', null, InputOption::VALUE_REQUIRED, 'Determines whether the `site` argument is optional or not. Accepted values are `all` or a comma-separated list of site IDs or domains.' )
-			->addOption( 'dry-run', null, InputOption::VALUE_NONE, 'Perform a dry run without actually deleting users' );
+			->addOption( 'dry-run', null, InputOption::VALUE_NONE, 'Perform a dry run without actually deleting users' )
+			->addOption( 'ssh-timeout', null, InputOption::VALUE_OPTIONAL, 'Timeout, in seconds, for the SSH connection process to run.', 60 );
 	}
 
 	/**
 	 * {@inheritDoc}
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
+		// Retrieve the SSH timeout option.
+		$this->ssh_timeout = $input->getOption( 'ssh-timeout' );
+
 		// Retrieve the user email.
 		$this->email = get_email_input( $input, fn() => $this->prompt_email_input( $input, $output ) );
 		$input->setArgument( 'email', $this->email );
@@ -122,7 +133,7 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 			$output->writeln( '<fg=magenta;options=bold>Trying to connect to those sites using SSH.</>' );
 
 			$errors = $this->__maybe_get_user_using_ssh( $output, $errors, $sites );
-			exit(1);
+			// exit(1);
 		}
 
 		maybe_output_wpcom_failed_sites_table( $output, $errors, $sites, 'Sites that could NOT be searched' );
@@ -355,58 +366,114 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 		return $failed_ssh_sites;
 	}
 
-	private function __maybe_get_user_using_ssh(OutputInterface $output, array $sites_with_errors, array $sites)
-	{
+	private function __maybe_get_user_using_ssh(OutputInterface $output, array $sites_with_errors, array $sites) {
+		
 		$sites_hosted = array_reduce( $sites, static fn( $carry, $site ) => $carry + array( $site->ID => $site ), array() );
 		$email = $this->email;
 
-		$parallel_process = Parallel_Process::create(
+		return Parallel_Process::create($output, $sites_with_errors)
+			->configure([
+				'max_processes' => 5,
+				'max_threads'   => 20,
+				'ssh_timeout'   => $this->ssh_timeout
+			])
+			
+			// region CALLBACKS
+
+			->add_callback('shell_command', function() use ($email){
+				return sprintf('wp user get %s --fields=ID,email --format=json', escapeshellarg($email));
+			})
+			->add_callback('command_args', function($site_id) use ($sites_hosted){
+				$site = $sites_hosted[$site_id];
+				$command = sprintf(
+					'--site-id=%s --site-type=%s --site-url=%s', 
+					$site_id,
+					$site->is_wpcom_atomic ? 'wpcom' : 'pressable',
+					$site->URL
+				);
+				return $command;
+			})
+			->add_callback('parse_result', function($result) use ($output, $sites_hosted){
+				if (str_contains($result['details'], 'Error: Invalid user')) {
+					return [
+						'code'    => 'user_not_found',
+						'site_id' => $result['site_id'],
+						'details' => 'User not found on ' . $sites_hosted[$result['site_id']]->URL,
+					];
+				}
+				return $result;
+			})
+			->add_callback('process_complete', function(int $index, int $completed, int $task_count, mixed $result) use ($output){
+
+				$output->writeln( sprintf(
+					'🔄 Progress: %d%% (%d/%d) - Completed: %s - %s [[%s]]',
+					intval( round( ( $completed / $task_count ) * 100 ) ),
+					$completed,
+					$task_count,
+					$index,
+					isset( $result['error'] ) ? '❌' : '✅',
+					json_encode($result)
+				));
+			})
+			
+			->process_tasks();
+
+			// endregion
+			
+		/* $parallel_process = Parallel_Process::create(
 			$output,
 			$sites_with_errors
 		)->configure([
 			'max_processes' => 5,
-			'max_threads' => 20
+			'max_threads'   => 20,
+			'ssh_timeout'   => $this->ssh_timeout
 		])->add_callback('shell_command', function() use ($email){
 			return sprintf('wp user get %s --fields=ID,email --format=json', escapeshellarg($email));
-		})->add_callback('command_args', function($site_id) use ($sites_hosted, $email){
+		})->add_callback('command_args', function($site_id) use ($sites_hosted){
 			$site = $sites_hosted[$site_id];
-			return sprintf(
+			$command = sprintf(
 				'--site-id=%s --site-type=%s --site-url=%s', 
-				$site->ID,
+				$site_id,
 				$site->is_wpcom_atomic ? 'wpcom' : 'pressable',
 				$site->URL
 			);
-		})->add_callback('buffer_out', function($buffer) use ($output){
-			$json = json_decode( $buffer, true ) ?? array();
-			if (str_contains($buffer, 'Error: Invalid user')) {
-				$output->writeln( json_encode([
+			return $command;
+		})->add_callback('parse_result', function($result) use ($output, $sites_hosted){
+			if (str_contains($result['details'], 'Error: Invalid user')) {
+				return [
 					'code'    => 'user_not_found',
-					'site_id' => $json['site_id'] ?? 0,
-					'details' => 'User not found'
-				]));
-				$output->writeln( 'Buffer: ' . $buffer );
-				return Command::SUCCESS;
+					'site_id' => $result['site_id'],
+					'details' => 'User not found on ' . $sites_hosted[$result['site_id']]->URL,
+				];
 			}
-			$output->writeln( "DEFAULT: $buffer" );
+			return $result;
+		})->add_callback('buffer_out', function($buffer) use ($output, $sites_hosted){
+			// $json = json_decode( $buffer, true ) ?? array();
+			// if (str_contains($buffer, 'Error: Invalid user')) {
+			// 	$output->writeln( "<fg=yellow;options=bold>User not found on " . $sites_hosted[$json['site_id']]->URL . "</fg=yellow;options=bold>" );
+			// 	return Command::SUCCESS;
+			// }
+			// $output->writeln( $buffer );
+			// return Command::SUCCESS;
 		})->add_callback('process_complete', function(int $index, int $completed, int $task_count, mixed $result) use ($output){
+
 			$output->writeln( sprintf(
-				'🔄 Progress: %d%% (%d/%d) - Completed: %s - %s',
+				'🔄 Progress: %d%% (%d/%d) - Completed: %s - %s [[%s]]',
 				intval( round( ( $completed / $task_count ) * 100 ) ),
 				$completed,
 				$task_count,
 				$index,
-				isset( $result['error'] ) ? '❌' : '✅'
+				isset( $result['error'] ) ? '❌' : '✅',
+				json_encode($result)
 			));
-		})->add_callback('process_start', function(int $site_id, int $completed, int $task_count) use ($output){
+		})->add_callback('process_start', function(int $site_id, int $pid, int $process_count) use ($output){
 			$output->writeln( sprintf(
-					'Started process %s (%s) - Active: %d',
-					$site_id,
-					$completed,
-					$task_count
-				));
-		});
-		
-		return $parallel_process->process_tasks();
+				'Started process %s (%s) - Active: %d',
+				$site_id,
+				$pid,
+				$process_count
+			));
+		}); */
 	}
 
 	/**
