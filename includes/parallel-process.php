@@ -1,4 +1,13 @@
 <?php
+/**
+ * Parallel Process Helper
+ *
+ * Handles parallel processing of tasks using PHP's parallel extension.
+ *
+ * @package WPCOMSpecialProjects\CLI\Helper
+ */
+
+declare(strict_types=1);
 
 namespace WPCOMSpecialProjects\CLI\Helper;
 
@@ -6,10 +15,16 @@ use parallel\Runtime as Parallel_Runtime;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Process\Process;
 
+/**
+ * Class Parallel_Process
+ */
 class Parallel_Process {
 
-	// region FIELDS AND CONSTANTS
-
+	/**
+	 * Console output interface.
+	 *
+	 * @var OutputInterface
+	 */
 	protected OutputInterface $output;
 
 	/**
@@ -22,14 +37,14 @@ class Parallel_Process {
 	/**
 	 * The number of processes to run in parallel.
 	 *
-	 * @var int
+	 * @var int|null
 	 */
 	protected ?int $max_processes;
 
 	/**
 	 * The number of threads to run in parallel.
 	 *
-	 * @var int
+	 * @var int|null
 	 */
 	protected ?int $max_threads;
 
@@ -55,11 +70,17 @@ class Parallel_Process {
 	protected ?int $ssh_timeout;
 
 	/**
-	 * Callbacks to run after the task is completed.
+	 * Callbacks to run during task processing.
 	 *
-	 * @var array
+	 * @var array{
+	 *     process_start: ?callable,
+	 *     process_complete: ?callable,
+	 *     buffer_out: ?callable,
+	 *     shell_command: ?callable,
+	 *     command_args: ?callable
+	 * }
 	 */
-	private $callbacks = array(
+	private array $callbacks = array(
 		'process_start'    => null,
 		'process_complete' => null,
 		'buffer_out'       => null,
@@ -67,38 +88,52 @@ class Parallel_Process {
 		'command_args'     => null,
 	);
 
-	// endregion
-
-	// region METHODS
-
+	/**
+	 * Constructor.
+	 *
+	 * @param OutputInterface $output Console output interface.
+	 * @param array           $tasks  Tasks to process.
+	 */
 	public function __construct( OutputInterface $output, array $tasks ) {
 		$this->output = $output;
+		$this->tasks  = $tasks;
 
-		$this->max_processes = $config['max_processes'] ?? 20;
-		$this->max_threads   = $config['max_threads'] ?? 10;
-
-		$this->tasks      = $tasks;
-		$this->task_count = count( $tasks );
-
-		return $this;
+		$this->max_processes = 20;
+		$this->max_threads   = 10;
+		$this->task_count    = count( $tasks );
 	}
 
+	/**
+	 * Creates a new instance.
+	 *
+	 * @param OutputInterface $output Console output interface.
+	 * @param array           $tasks  Tasks to process.
+	 * @return self
+	 */
 	public static function create( OutputInterface $output, array $tasks ): self {
 		return new self( $output, $tasks );
 	}
 
 	/**
-	 * Add a callback to the parallel process.
+	 * Adds a callback to the parallel process.
 	 *
-	 * @param string   $name The name of the callback e.g. 'shell_command', 'command_args', 'buffer_out'
-	 * @param callable $callback The callback to add.
-	 * @return self The parallel process instance.
+	 * @param string   $name     Callback name.
+	 * @param callable $callback Callback function.
+	 * @return self
 	 */
 	public function add_callback( string $name, callable $callback ): self {
 		$this->callbacks[ $name ] = $callback;
 		return $this;
 	}
 
+	/**
+	 * Runs a registered callback.
+	 *
+	 * @param string $name   Callback name.
+	 * @param bool   $return Whether to return the callback result.
+	 * @param mixed  ...$args Callback arguments.
+	 * @return mixed
+	 */
 	protected function run_callback( string $name, bool $return, ...$args ): mixed {
 		if ( is_callable( $this->callbacks[ $name ] ) ) {
 			if ( $return ) {
@@ -109,6 +144,12 @@ class Parallel_Process {
 		return null;
 	}
 
+	/**
+	 * Configures the parallel process.
+	 *
+	 * @param array $config Configuration options.
+	 * @return self
+	 */
 	public function configure( array $config ): self {
 		$this->max_threads   = $config['max_threads'] ?? 10;
 		$this->max_processes = $config['max_processes'] ?? 20;
@@ -116,25 +157,29 @@ class Parallel_Process {
 		return $this;
 	}
 
+	/**
+	 * Processes all tasks in parallel.
+	 *
+	 * @return array Task failures.
+	 */
 	public function process_tasks(): array {
-
-		$start_time = microtime( true );
-
+		$start_time    = microtime( true );
 		$task_failures = array();
 		$processes     = array();
 		$completed     = 0;
 		$results       = array();
 
-		foreach ( $this->tasks as $id => $task ) {
+		foreach ( $this->tasks as $id ) {
 			if ( ! is_callable( $this->callbacks['command_args'] ) ) {
 				$this->output->writeln(
 					sprintf(
-						'<error>Command args callback is not callable for task.</error>',
+						'<error>Command args callback is not callable for task %s.</error>',
 						$id
 					)
 				);
 				exit( 1 );
 			}
+
 			$process          = $this->create_ssh_worker_process( ( $this->callbacks['command_args'] )( $id ) );
 			$processes[ $id ] = $process;
 
@@ -148,59 +193,55 @@ class Parallel_Process {
 			}
 		}
 
-		// Process remaining
 		while ( ! empty( $processes ) ) {
 			$this->handle_completed_processes( $processes, $results, $task_failures, $completed );
 			usleep( 50000 );
 		}
 
-		$end_time = microtime( true );
-		$duration = round( $end_time - $start_time );
-
-		$hours   = intval( $duration / 3600 );
-		$minutes = intval( ( $duration % 3600 ) / 60 );
-		$seconds = intval( $duration % 60 );
-
-		$this->output->writeln(
-			sprintf(
-				"\n⏱️ Total execution time: %02d:%02d:%02d",
-				$hours,
-				$minutes,
-				$seconds
-			)
-		);
+		$this->output_execution_time( $start_time );
 
 		return $task_failures;
 	}
 
+	/**
+	 * Creates an SSH worker process.
+	 *
+	 * @param string $args Command arguments.
+	 * @return Process
+	 */
 	private function create_ssh_worker_process( string $args ): Process {
 		$shell_command = $this->run_callback( 'shell_command', true, $args );
 		if ( ! $shell_command ) {
-			$this->output->writeln(
-				sprintf(
-					'<error>Shell command empty.</error>',
-				)
-			);
+			$this->output->writeln( '<error>Shell command empty.</error>' );
 			exit( 1 );
 		}
+
 		$process = Process::fromShellCommandline(
 			sprintf(
 				'php %s ssh-worker %s %s %s --quiet',
-				\TEAM51_CLI_FILE,
+				TEAM51_CLI_FILE,
 				$args,
-				"--shell-command=\"{$shell_command}\"",
-				$this->ssh_timeout ? "--timeout={$this->ssh_timeout}" : ''
+				sprintf( '--shell-command="%s"', $shell_command ),
+				$this->ssh_timeout ? sprintf( '--timeout=%d', $this->ssh_timeout ) : ''
 			)
 		);
-		$process->setTimeout( null ); // Disable timeout, it's handle in the SSH worker.
+
+		$process->setTimeout( null );
 		$process->start(
 			function ( $type, $buffer ) {
 				$this->filter_output( $buffer );
 			}
 		);
+
 		return $process;
 	}
 
+	/**
+	 * Filters and handles process output.
+	 *
+	 * @param string $buffer         Output buffer.
+	 * @param bool   $write_to_output Whether to write directly to output.
+	 */
 	private function filter_output( string $buffer, bool $write_to_output = false ): void {
 		if ( $write_to_output ) {
 			$this->output->writeln( $buffer );
@@ -209,21 +250,38 @@ class Parallel_Process {
 		}
 	}
 
+	/**
+	 * Handles completed processes.
+	 *
+	 * @param array $processes     Reference to active processes.
+	 * @param array $results       Reference to results array.
+	 * @param array $task_failures Reference to task failures array.
+	 * @param int   $completed     Reference to completed count.
+	 */
 	private function handle_completed_processes( array &$processes, array &$results, array &$task_failures, int &$completed ): void {
 		foreach ( $processes as $index => $process ) {
 			if ( ! $process->isRunning() ) {
 				$process_output = $process->getOutput() ?: $process->getErrorOutput();
-				$result         = \json_decode( $process_output, true );
-				$result         = $this->run_callback( 'parse_result', true, $result );
+				$result         = json_decode( $process_output, true );
+				$result         = $this->run_callback(
+					'parse_result',
+					true,
+					$result ?? array( 'no_result' => json_encode( $process_output ) )
+				);
+
 				if ( $result && ! isset( $result['error'] ) ) {
 					$results[ $index ] = $result;
 				} else {
-					$error_message           = $result['error'] ?? 'SSH connection failed';
-					$error_details           = $result['details'] ?? 'No details available';
 					$task_failures[ $index ] = (object) array(
-						'error'  => $error_message,
+						'error'  => $result['error'] ?? 'SSH connection failed',
 						'id'     => $result['id'] ?? $index,
-						'errors' => array( $error_message . ': ' . $error_details ),
+						'errors' => array(
+							sprintf(
+								'%s: %s',
+								$result['error'] ?? 'SSH connection failed',
+								$result['details'] ?? 'No details available'
+							),
+						),
 					);
 				}
 
@@ -234,5 +292,24 @@ class Parallel_Process {
 		}
 	}
 
-	// endregion
+	/**
+	 * Outputs execution time information.
+	 *
+	 * @param float $start_time Process start time.
+	 */
+	private function output_execution_time( float $start_time ): void {
+		$duration = round( microtime( true ) - $start_time );
+		$hours    = intval( $duration / 3600 );
+		$minutes  = intval( ( $duration % 3600 ) / 60 );
+		$seconds  = intval( $duration % 60 );
+
+		$this->output->writeln(
+			sprintf(
+				"\n⏱️ Total execution time: %02d:%02d:%02d",
+				$hours,
+				$minutes,
+				$seconds
+			)
+		);
+	}
 }
