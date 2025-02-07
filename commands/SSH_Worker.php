@@ -10,6 +10,7 @@ declare(strict_types=1);
 
 namespace WPCOMSpecialProjects\CLI\Command;
 
+use InvalidArgumentException;
 use Symfony\Component\Console\{
 	Command\Command,
 	Input\InputInterface,
@@ -28,26 +29,6 @@ use WPCOM_Connection_Helper;
 enum SiteType: string {
     case WPCOM = 'wpcom';
     case PRESSABLE = 'pressable';
-
-    /**
-     * Get the display name for the site type
-     */
-    public function get_display_name(): string {
-        return match($this) {
-            self::WPCOM => 'WordPress.com',
-            self::PRESSABLE => 'Pressable',
-        };
-    }
-
-    /**
-     * Check if site type requires a site URL
-     */
-    public function requires_site_url(): bool {
-        return match($this) {
-            self::PRESSABLE => true,
-            default         => false,
-        };
-    }
 }
 
 /**
@@ -104,12 +85,12 @@ class SSH_Worker extends Command {
 		$this
 			->setDescription( 'SSH Worker for processing shell commands' )
 			// Required.
-			->addOption( 'site-id', null, InputOption::VALUE_REQUIRED, 'The site ID' )
+			->addOption( 'site-id', null, InputOption::VALUE_REQUIRED, 'The site ID to SSH into' )
 			->addOption( 'site-type', null, InputOption::VALUE_REQUIRED, 'Site type (wpcom or pressable)' )
 			->addOption( 'shell-command', null, InputOption::VALUE_REQUIRED, 'The shell command to execute' )
 			// Optional.
-			->addOption( 'site-url', null, InputOption::VALUE_OPTIONAL, 'The site url' )
-			->addOption( 'timeout', null, InputOption::VALUE_OPTIONAL, 'The timeout for the SSH connection' );
+			->addOption( 'site-url', null, InputOption::VALUE_OPTIONAL, 'The site url used for Pressable sites' )
+			->addOption( 'timeout', null, InputOption::VALUE_OPTIONAL, 'The timeout for the SSH connection', 60 );
 	}
 
 	/**
@@ -126,7 +107,7 @@ class SSH_Worker extends Command {
 		
 		// Safely convert string to enum
 		$this->site_type = SiteType::tryFrom($site_type_str) 
-			?? throw new \InvalidArgumentException(
+			?? throw new InvalidArgumentException(
 				json_encode([
 					'error' => 'invalid_site_type',
 					'details' => "Site type must be one of: " . 
@@ -134,19 +115,9 @@ class SSH_Worker extends Command {
 				])
 			);
 
-		// Use enum methods
-		if ($this->site_type->requires_site_url() && empty($input->getOption('site-url'))) {
-			throw new \InvalidArgumentException(
-				json_encode([
-					'error'   => 'missing_site_url',
-					'details' => $this->site_type->get_display_name() . ' sites require a site URL'
-				])
-			);
-		}
-
 		$this->site_url      = $input->getOption( 'site-url' );
 		$this->shell_command = $input->getOption( 'shell-command' );
-		$this->timeout       = $input->getOption( 'timeout' ) ?? 60;
+		$this->timeout       = (int) $input->getOption( 'timeout' );
 
 		if ( ! $this->site_id || ! $this->site_type ) {
 			throw new \InvalidArgumentException(
@@ -184,13 +155,7 @@ class SSH_Worker extends Command {
 		$emit = $this->emit( $this->site_id );
 		try {
 			$pressable_site_id = null;
-			echo json_encode([
-				'site_id' => $this->site_id,
-				'site_type' => $this->site_type->value,
-				'site_url' => $this->site_url,
-				'site_type_enum_pressable' => SiteType::PRESSABLE,
-			]);
-			if ( SiteType::PRESSABLE === $this->site_type->value ) {
+			if ( SiteType::PRESSABLE === $this->site_type ) {
 				try {
 					$pressable_site = get_pressable_site( $this->site_url );
 					if ( ! $pressable_site ) {
@@ -212,7 +177,7 @@ class SSH_Worker extends Command {
 				}
 			}
 
-			$ssh = $this->get_ssh_connection( $this->site_id, $this->site_type->value, $pressable_site_id );
+			$ssh = $this->get_ssh_connection( $this->site_id, (string) $pressable_site_id );
 			if ( ! $ssh ) {
 				return $emit(
 					array(
@@ -254,7 +219,7 @@ class SSH_Worker extends Command {
 				);
 			}
 
-			// Only try to parse JSON if we don't have an error message
+			// Valid responses are JSON encoded. Test for errors first.
 			$data = json_decode( $result, true );
 			if ( ! $data ) {
 				if ( str_contains( $result, 'Fatal error:' ) ) {
@@ -265,6 +230,14 @@ class SSH_Worker extends Command {
 						)
 					);
 				}
+				if ( str_contains( $result, 'Warning:' ) ) {
+					return $emit(
+						array(
+							'error'   => 'warning',
+							'details' => $result,
+						)
+					);
+				}
 				return $emit(
 					array(
 						'error'   => 'invalid_json',
@@ -272,7 +245,6 @@ class SSH_Worker extends Command {
 					)
 				);
 			}
-
 			return $emit(
 				array(
 					'code' => 'success',
