@@ -2,7 +2,6 @@
 
 namespace WPCOMSpecialProjects\CLI\Command;
 
-use phpseclib3\File\ASN1\Maps\ECPoint;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Helper\ProgressBar;
@@ -86,9 +85,6 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 	 * {@inheritDoc}
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
-		// Retrieve the SSH timeout option.
-		$this->ssh_timeout = $input->getOption( 'ssh-timeout' );
-
 		// Retrieve the user email.
 		$this->email = get_email_input( $input, fn() => $this->prompt_email_input( $input, $output ) );
 		$input->setArgument( 'email', $this->email );
@@ -133,7 +129,7 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 			$output->writeln( "<comment>There are $number_of_errors sites that could NOT be searched.</comment>" );
 			$output->writeln( '<fg=magenta;options=bold>Trying to connect to those sites using SSH.</>' );
 
-			$errors = $this->__maybe_get_user_using_ssh( $output, $errors, $sites );
+			$errors = $this->get_user_using_ssh( $output, $errors, $sites );
 		}
 
 		maybe_output_wpcom_failed_sites_table( $output, $errors, $sites, 'Sites that could NOT be searched' );
@@ -300,73 +296,7 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
 	}
 
-	/**
-	 * Check if we can get the user with SSH on Jetpack API failed sites.
-	 *
-	 * @param OutputInterface $output            The output interface.
-	 * @param array           $sites_with_errors Sites with errors when using Jetpack API.
-	 * @param array           $sites             The sites.
-	 *
-	 * @return array
-	 */
-	private function maybe_get_user_using_ssh( OutputInterface $output, array $sites_with_errors, array $sites ): array {
-
-		$sites_hosted     = array_reduce( $sites, static fn( $carry, $site ) => $carry + array( $site->ID => $site ), array() );
-		$failed_ssh_sites = array();
-		$ssh_sites        = 0;
-		$progress_bar     = new ProgressBar( $output, count( $sites_with_errors ) );
-		$progress_bar->start();
-
-		foreach ( $sites_with_errors as $site_id => $site_error_data ) {
-			$progress_bar->advance();
-			$output->writeln( '' );
-			$site      = $sites_hosted[ $site_id ];
-			$is_atomic = $site->is_wpcom_atomic;
-			$ssh       = $is_atomic ? \WPCOM_Connection_Helper::get_ssh_connection( $site_id ) : null;
-
-			if ( ! $is_atomic ) {
-				$pressable_site = get_pressable_site( $site->URL );
-				$ssh            = $pressable_site ? \Pressable_Connection_Helper::get_ssh_connection( $pressable_site->id ) : null;
-			}
-
-			if ( $ssh ) {
-				try {
-					$ssh->setTimeout( 0 ); // Disable timeout in case the command takes a long time.
-					$ssh->exec(
-						"wp user get $this->email --fields=ID,email --format=json",
-						function ( string $str ) use ( $output ): void {
-							$GLOBALS['wp_cli_output'] = $str;
-						}
-					);
-					++$ssh_sites;
-					$user = json_decode( $GLOBALS['wp_cli_output'] );
-					if ( $user ) {
-						$this->users[ $site_id ]     = array( $user );
-						$ssh_user_data['type']       = ! empty( $pressable_site ) ? 'pressable' : 'wpcom';
-						$ssh_user_data['id']         = ! empty( $pressable_site ) ? $pressable_site->id : $site_id;
-						$this->ssh_users[ $site_id ] = $ssh_user_data;
-					}
-				} catch ( \RuntimeException $exception ) {
-					$output->writeln( "<error>SSH command failed for site ID {$site_id}: {$exception->getMessage()}</error>" );
-					$failed_ssh_sites[ $site_id ] = $site_error_data;
-				} finally {
-					$ssh->disconnect();
-				}
-			} else {
-				$error_message = $is_atomic ? 'NO SSH WPCOM connection available' : 'NO Pressable SSH connection available';
-				$output->writeln( "<error>{$error_message} for site ID {$site_id}</error>" );
-				$failed_ssh_sites[ $site_id ] = $site_error_data;
-			}
-		}
-
-		$progress_bar->finish();
-		$output->writeln( '' );
-		$output->writeln( "<comment>Connected to $ssh_sites sites using SSH.</comment>" );
-
-		return $failed_ssh_sites;
-	}
-
-	private function __maybe_get_user_using_ssh(OutputInterface $output, array $sites_with_errors, array $sites): array {
+	private function get_user_using_ssh(OutputInterface $output, array $sites_with_errors, array $sites): array {
 		$email        			= $this->email;
 		$sites_by_id 			= array_column( $sites, null, 'ID' );
 		// @TODO Remove once dev is over.
