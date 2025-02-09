@@ -155,33 +155,16 @@ class SSH_Worker extends Command {
 	 * @return int Command exit status.
 	 */
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
-		$pressable_site_id = 0;
+		$pressable_site_id = null;
 		try {
-			if ( SiteType::PRESSABLE === $this->site_type ) {
-				try {
-					$pressable_site = get_pressable_site( $this->site_url );
-					if ( ! $pressable_site ) {
-						return $this->emit(
-							array(
-								'error'             => 'get_pressable_site_not_found',
-								'pressable_site_id' => 0,
-								'details'           => 'Error occurred while fetching Pressable site info for domain: ' . $this->site_url,
-							)
-						);
-					}
-					$pressable_site_id = $pressable_site->id;
-				} catch ( \Exception $e ) {
-					return $this->emit(
-						array(
-							'error'             => 'get_pressable_site_failed',
-							'pressable_site_id' => $pressable_site_id,
-							'details'           => 'Error occurred while fetching Pressable site info for domain: ' . $this->site_url,
-						)
-					);
-				}
+			$pressable_site_id = $this->site_type === SiteType::PRESSABLE ? $this->get_pressable_site_id() : null;
+			// If there is an error getting the Pressable site ID lets return
+			// since the error is already emitted.
+			if ( 1 === $pressable_site_id ) {
+				return Command::FAILURE;
 			}
 
-			$ssh = $this->get_ssh_connection( $this->site_id, (string) $pressable_site_id );
+			$ssh = $this->get_ssh_connection( $this->site_id, $pressable_site_id );
 			if ( ! $ssh ) {
 				return $this->emit(
 					array(
@@ -307,12 +290,43 @@ class SSH_Worker extends Command {
 	 *
 	 * @return SSH2|null SSH connection instance or null if unavailable.
 	 */
-	protected function get_ssh_connection( string $site_id, ?string $pressable_id = null ): ?SSH2 {
+	protected function get_ssh_connection( string $site_id, ?int $pressable_id = null ): ?SSH2 {
 		return match ( $this->site_type->value ) {
 			'wpcom'     => WPCOM_Connection_Helper::get_ssh_connection( $site_id ),
-			'pressable' => $pressable_id ? Pressable_Connection_Helper::get_ssh_connection( $pressable_id ) : null,
+			'pressable' => $pressable_id ? Pressable_Connection_Helper::get_ssh_connection( (string) $pressable_id ) : null,
 			default     => null,
 		};
+	}
+
+	/**
+	 * Gets the Pressable site ID.
+	 *
+	 * @return int|null Null if not a Pressable site, 1 on error and otherwise the Pressable site ID on success..
+	 */
+	protected function get_pressable_site_id(): int|null {
+		$pressable_site_id = null;
+		try {
+			$pressable_site = get_pressable_site( $this->site_url );
+			if ( ! $pressable_site ) {
+				return $this->emit(
+					array(
+						'error'             => 'get_pressable_site_not_found',
+						'pressable_site_id' => 0,
+						'details'           => 'Error occurred while fetching Pressable site info for domain: ' . $this->site_url,
+					)
+				);
+			}
+			$pressable_site_id = $pressable_site->id;
+		} catch ( \Exception $e ) {
+			return $this->emit(
+				array(
+					'error'             => 'get_pressable_site_failed',
+					'pressable_site_id' => $pressable_site_id,
+					'details'           => 'Error occurred while fetching Pressable site info for domain: ' . $this->site_url,
+				)
+			);
+		}
+		return $pressable_site_id;
 	}
 
 	// endregion
