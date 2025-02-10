@@ -19,6 +19,8 @@ use Symfony\Component\Process\Process;
  */
 class Parallel_Process {
 
+	// region FIELDS AND CONSTANTS
+
 	/**
 	 * Console output interface.
 	 *
@@ -87,6 +89,10 @@ class Parallel_Process {
 		'command_args'     => null,
 	);
 
+	// endregion
+
+	// region CONSTRUCTOR
+
 	/**
 	 * Constructor.
 	 *
@@ -101,6 +107,10 @@ class Parallel_Process {
 		$this->max_threads   = 10;
 		$this->task_count    = count( $tasks );
 	}
+
+	// endregion
+
+	// region PUBLIC METHODS
 
 	/**
 	 * Creates a new instance.
@@ -123,24 +133,6 @@ class Parallel_Process {
 	public function add_callback( string $name, callable $callback ): self {
 		$this->callbacks[ $name ] = $callback;
 		return $this;
-	}
-
-	/**
-	 * Runs a registered callback.
-	 *
-	 * @param string $name   Callback name.
-	 * @param bool   $is_returnable Whether to return the callback result.
-	 * @param mixed  ...$args Callback arguments.
-	 * @return mixed
-	 */
-	protected function run_callback( string $name, bool $is_returnable, ...$args ): mixed {
-		if ( is_callable( $this->callbacks[ $name ] ) ) {
-			if ( $is_returnable ) {
-				return ( $this->callbacks[ $name ] )( ...$args );
-			}
-			( $this->callbacks[ $name ] )( ...$args );
-		}
-		return null;
 	}
 
 	/**
@@ -202,13 +194,35 @@ class Parallel_Process {
 		return $task_failures;
 	}
 
+	// endregion
+
+	// region PROTECTED METHODS
+
+	/**
+	 * Runs a registered callback.
+	 *
+	 * @param string $name   Callback name.
+	 * @param bool   $is_returnable Whether to return the callback result.
+	 * @param mixed  ...$args Callback arguments.
+	 * @return mixed
+	 */
+	protected function run_callback( string $name, bool $is_returnable, ...$args ): mixed {
+		if ( is_callable( $this->callbacks[ $name ] ) ) {
+			if ( $is_returnable ) {
+				return ( $this->callbacks[ $name ] )( ...$args );
+			}
+			( $this->callbacks[ $name ] )( ...$args );
+		}
+		return null;
+	}
+
 	/**
 	 * Creates an SSH worker process.
 	 *
 	 * @param string $args Command arguments.
 	 * @return Process
 	 */
-	private function create_ssh_worker_process( string $args ): Process {
+	protected function create_ssh_worker_process( string $args ): Process {
 		$shell_command = $this->run_callback( 'shell_command', true, $args );
 		if ( ! $shell_command ) {
 			$this->output->writeln( '<error>Shell command empty.</error>' );
@@ -241,7 +255,7 @@ class Parallel_Process {
 	 * @param string $buffer         Output buffer.
 	 * @param bool   $write_to_output Whether to write directly to output.
 	 */
-	private function filter_output( string $buffer, bool $write_to_output = false ): void {
+	protected function filter_output( string $buffer, bool $write_to_output = false ): void {
 		if ( $write_to_output ) {
 			$this->output->writeln( $buffer );
 		} else {
@@ -257,7 +271,7 @@ class Parallel_Process {
 	 * @param array $task_failures Reference to task failures array.
 	 * @param int   $completed     Reference to completed count.
 	 */
-	private function handle_completed_processes( array &$processes, array &$results, array &$task_failures, int &$completed ): void {
+	protected function handle_completed_processes( array &$processes, array &$results, array &$task_failures, int &$completed ): void {
 		foreach ( $processes as $index => $process ) {
 			if ( ! $process->isRunning() ) {
 				$process_output = $process->getOutput() ?: $process->getErrorOutput();
@@ -290,7 +304,7 @@ class Parallel_Process {
 	 *
 	 * @param float $start_time Process start time.
 	 */
-	private function output_execution_time( float $start_time ): void {
+	protected function output_execution_time( float $start_time ): void {
 		$duration = round( microtime( true ) - $start_time );
 		$hours    = intval( $duration / 3600 );
 		$minutes  = intval( ( $duration % 3600 ) / 60 );
@@ -305,4 +319,6 @@ class Parallel_Process {
 			)
 		);
 	}
+
+	// endregion
 }
