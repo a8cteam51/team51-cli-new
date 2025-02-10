@@ -272,6 +272,7 @@ class Parallel_Process {
 	 * @param int   $completed     Reference to completed count.
 	 */
 	protected function handle_completed_processes( array &$processes, array &$results, array &$task_failures, int &$completed ): void {
+		$failed_count = count( $task_failures );
 		foreach ( $processes as $index => $process ) {
 			if ( ! $process->isRunning() ) {
 				$process_output = $process->getOutput() ?: $process->getErrorOutput();
@@ -290,11 +291,12 @@ class Parallel_Process {
 						'id'     => $result['id'] ?? $index,
 						'errors' => $result['details'] ?? 'No details available',
 					);
+					++$failed_count;
 				}
 
 				unset( $processes[ $index ] );
 				++$completed;
-				$this->run_callback( 'process_complete', false, $index, $completed, $this->task_count, $result );
+				$this->run_callback( 'process_complete', false, $index, $result, $failed_count );
 			}
 		}
 	}
