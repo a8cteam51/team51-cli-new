@@ -40,14 +40,7 @@ class Parallel_Process {
 	 *
 	 * @var int|null
 	 */
-	protected ?int $max_processes;
-
-	/**
-	 * The number of threads to run in parallel.
-	 *
-	 * @var int|null
-	 */
-	protected ?int $max_threads;
+	protected ?int $max_parallel = 10;
 
 	/**
 	 * The tasks to run in parallel.
@@ -55,13 +48,6 @@ class Parallel_Process {
 	 * @var array
 	 */
 	protected array $tasks;
-
-	/**
-	 * Whether the `parallel` extension is available.
-	 *
-	 * @var bool
-	 */
-	protected static bool $parallel_extension_loaded;
 
 	/**
 	 * The timeout, in seconds, for the SSH connection process to run.
@@ -103,9 +89,7 @@ class Parallel_Process {
 		$this->output = $output;
 		$this->tasks  = $tasks;
 
-		$this->max_processes = 20;
-		$this->max_threads   = 10;
-		$this->task_count    = count( $tasks );
+		$this->task_count   = count( $tasks );
 	}
 
 	// endregion
@@ -142,9 +126,8 @@ class Parallel_Process {
 	 * @return self
 	 */
 	public function configure( array $config ): self {
-		$this->max_threads   = $config['max_threads'] ?? 10;
-		$this->max_processes = $config['max_processes'] ?? 20;
-		$this->ssh_timeout   = $config['ssh_timeout'] ?? 120;
+		$this->max_parallel = $config['max_parallel'] ?? 10;
+		$this->ssh_timeout  = $config['ssh_timeout'] ?? 120;
 		return $this;
 	}
 
@@ -177,7 +160,7 @@ class Parallel_Process {
 			$this->run_callback( 'process_start', false, $id, $process->getPid(), count( $processes ) );
 
 			$current_processes = count( $processes );
-			while ( $current_processes >= $this->max_processes ) {
+			while ( $current_processes >= $this->max_parallel ) {
 				$this->handle_completed_processes( $processes, $results, $task_failures, $completed );
 				usleep( 50000 );
 				$current_processes = count( $processes );
@@ -280,18 +263,22 @@ class Parallel_Process {
 				$result         = $this->run_callback(
 					'parse_result',
 					true,
-					$result ?? array( 'no_result' => json_encode( $process_output ) )
+					$result ?? array(
+						'error'   => 'no_result',
+						'details' => json_encode( $process_output ),
+						'site_id' => $index,
+					)
 				);
 
-				if ( $result && ! isset( $result['error'] ) ) {
-					$results[ $index ] = $result;
-				} else {
+				if ( isset( $result['error'] ) ) {
 					$task_failures[ $index ] = (object) array(
 						'error'  => $result['error'] ?? 'SSH connection failed',
 						'id'     => $result['id'] ?? $index,
 						'errors' => $result['details'] ?? 'No details available',
 					);
 					++$failed_count;
+				} else {
+					$results[ $index ] = $result;
 				}
 
 				unset( $processes[ $index ] );

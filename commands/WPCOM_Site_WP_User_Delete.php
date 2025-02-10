@@ -63,6 +63,13 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 	 */
 	private ?int $ssh_timeout = null;
 
+	/**
+	 * The maximum number of parallel processes to run.
+	 *
+	 * @var int|null
+	 */
+	private ?int $max_parallel;
+
 	// endregion
 
 	// region INHERITED METHODS
@@ -79,7 +86,8 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 
 		$this->addOption( 'multiple', null, InputOption::VALUE_REQUIRED, 'Determines whether the `site` argument is optional or not. Accepted values are `all` or a comma-separated list of site IDs or domains.' )
 			->addOption( 'dry-run', null, InputOption::VALUE_NONE, 'Perform a dry run without actually deleting users' )
-			->addOption( 'ssh-timeout', null, InputOption::VALUE_OPTIONAL, 'Timeout, in seconds, for the SSH connection process to run.', 60 );
+			->addOption( 'ssh-timeout', null, InputOption::VALUE_OPTIONAL, 'Timeout, in seconds, for the SSH connection process to run.', 60 )
+			->addOption( 'max-parallel', null, InputOption::VALUE_OPTIONAL, 'The maximum number of parallel processes to run.', 10 );
 	}
 
 	/**
@@ -92,6 +100,9 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 
 		// Retrieve the dry run option.
 		$this->dry_run = get_bool_input( $input, 'dry-run' );
+
+		// Retrieve the maximum number of parallel processes to run.
+		$this->max_parallel = (int) $input->getOption( 'max-parallel' );
 
 		// If processing a given site, retrieve it from the input.
 		$multiple = $input->getOption( 'multiple' );
@@ -321,16 +332,14 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 		$ssh_users            = &$this->ssh_users;
 		$user_count           = 0;
 
-		$progress_bar = new ProgressBar( $output, count( $site_ids_with_errors ) );
-		$progress_bar->setFormat( '(%current%/%max%) [%bar%] %percent:3s%% • %message%' );
-		$progress_bar->setMessage( 'Initializing...' );
-		$progress_bar->start();
+		$output->writeln( '' );
+
+		$progress_bar = $this->initialize_progress_bar( $output, count( $site_ids_with_errors ) );
 
 		$failed_tasks = Parallel_Process::create( $output, $site_ids_with_errors )
 			->configure(
 				array(
-					'max_processes' => 5,
-					'max_threads'   => 20,
+					'max_parallel' => $this->max_parallel,
 					'ssh_timeout'   => $this->ssh_timeout,
 				)
 			)
@@ -470,6 +479,18 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 				return ! \in_array( $site_domain, $exclude_sites, true );
 			}
 		);
+	}
+
+	/**
+	 * Initialize progress bar for SSH operations.
+	 */
+	private function initialize_progress_bar( OutputInterface $output, int $total_items ): ProgressBar {
+		$progress_bar = new ProgressBar( $output, $total_items );
+		$progress_bar->setFormat( '(%current%/%max%) [%bar%] %percent:3s%% • %message%' );
+		$progress_bar->setMessage( 'Initializing...' );
+		$progress_bar->start();
+		
+		return $progress_bar;
 	}
 
 	// endregion
