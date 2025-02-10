@@ -23,15 +23,7 @@ use Symfony\Component\Console\{
 use phpseclib3\Net\SSH2;
 use Pressable_Connection_Helper;
 use WPCOM_Connection_Helper;
-
-/**
- * Site type enum
- */
-enum SiteType: string {
-	case WPCOM     = 'wpcom';
-	case PRESSABLE = 'pressable';
-}
-
+use WPCOMSpecialProjects\CLI\Enums\Site_Type;
 /**
  * SSH Worker Command
  */
@@ -50,9 +42,9 @@ class SSH_Worker extends Command {
 	/**
 	 * Site type i.e. wpcom or pressable
 	 *
-	 * @var SiteType
+	 * @var Site_Type
 	 */
-	protected SiteType $site_type;
+	protected Site_Type $site_type;
 
 	/**
 	 * Site URL
@@ -100,20 +92,21 @@ class SSH_Worker extends Command {
 	 * @param InputInterface  $input  The input interface.
 	 * @param OutputInterface $output The output interface.
 	 *
-	 * @throws \InvalidArgumentException If required parameters are missing.
+	 * @throws InvalidArgumentException If site type is invalid.
+	 * @throws InvalidArgumentException If site ID or shell command is missing.
 	 */
 	protected function initialize( InputInterface $input, OutputInterface $output ): void {
 		$this->site_id = $input->getOption( 'site-id' );
 		$site_type_str = $input->getOption( 'site-type' );
 
 		// Safely convert string to enum
-		$this->site_type = SiteType::tryFrom( $site_type_str )
+		$this->site_type = Site_Type::tryFrom( $site_type_str )
 			?? throw new InvalidArgumentException(
 				json_encode(
 					array(
 						'error'   => 'invalid_site_type',
 						'details' => 'Site type must be one of: '
-							. implode( ', ', array_column( SiteType::cases(), 'value' ) ),
+							. implode( ', ', array_column( Site_Type::cases(), 'value' ) ),
 					)
 				)
 			);
@@ -122,24 +115,12 @@ class SSH_Worker extends Command {
 		$this->shell_command = $input->getOption( 'shell-command' );
 		$this->timeout       = (int) $input->getOption( 'timeout' );
 
-		if ( ! $this->site_id || ! $this->site_type ) {
-			throw new \InvalidArgumentException(
+		if ( ! $this->site_id || ! $this->shell_command ) {
+			throw new InvalidArgumentException(
 				json_encode(
 					array(
-						'error'   => 'missing_required_parameters',
-						'site_id' => $this->site_id,
-						'details' => 'Required: site_id and site_type',
-					)
-				)
-			);
-		}
-		if ( ! $this->shell_command ) {
-			throw new \InvalidArgumentException(
-				json_encode(
-					array(
-						'error'   => 'missing_required_parameters',
-						'site_id' => $this->site_id,
-						'details' => 'Required: shell-command',
+						'error'   => 'missing_required_param',
+						'details' => sprintf( 'Required: site-id: %s, shell-command: %s', $this->site_id, $this->shell_command ),
 					)
 				)
 			);
@@ -157,14 +138,14 @@ class SSH_Worker extends Command {
 	protected function execute( InputInterface $input, OutputInterface $output ): int {
 		$pressable_site_id = null;
 		try {
-			$pressable_site_id = $this->site_type === SiteType::PRESSABLE ? $this->get_pressable_site_id() : null;
+			$pressable_site_id = Site_Type::PRESSABLE === $this->site_type ? $this->get_pressable_site_id() : null;
 			// If there is an error getting the Pressable site ID lets return
 			// since the error is already emitted.
 			if ( 1 === $pressable_site_id ) {
 				return Command::FAILURE;
 			}
 
-			$ssh = $this->get_ssh_connection( $this->site_id, $pressable_site_id );
+			$ssh = $this->get_ssh_connection( $this->site_id, (string) $pressable_site_id );
 			if ( ! $ssh ) {
 				return $this->emit(
 					array(
@@ -212,28 +193,11 @@ class SSH_Worker extends Command {
 			// Valid responses are JSON encoded. Test for errors first.
 			$data = json_decode( $result, true );
 			if ( ! $data ) {
-				if ( str_contains( $result, 'Fatal error:' ) ) {
-					return $this->emit(
-						array(
-							'error'             => 'fatal_error',
-							'pressable_site_id' => $pressable_site_id,
-							'details'           => 'Fatal error occurred at source while executing shell command.',
-						)
-					);
-				}
-				if ( str_contains( $result, 'Warning:' ) ) {
-					return $this->emit(
-						array(
-							'error'             => 'warning',
-							'pressable_site_id' => $pressable_site_id,
-							'details'           => $result,
-						)
-					);
-				}
 				return $this->emit(
 					array(
 						'error'             => 'invalid_json',
 						'pressable_site_id' => $pressable_site_id,
+						'type'              => $this->site_type,
 						'details'           => $result,
 					)
 				);
@@ -285,15 +249,14 @@ class SSH_Worker extends Command {
 	 * Establishes an SSH connection.
 	 *
 	 * @param string $site_id      The site ID.
-	 * @param string $site_type    The site type ("wpcom" or "pressable").
 	 * @param string $pressable_id The Pressable site ID (if applicable).
 	 *
 	 * @return SSH2|null SSH connection instance or null if unavailable.
 	 */
-	protected function get_ssh_connection( string $site_id, ?int $pressable_id = null ): ?SSH2 {
+	protected function get_ssh_connection( string $site_id, ?string $pressable_id = null ): ?SSH2 {
 		return match ( $this->site_type->value ) {
 			'wpcom'     => WPCOM_Connection_Helper::get_ssh_connection( $site_id ),
-			'pressable' => $pressable_id ? Pressable_Connection_Helper::get_ssh_connection( (string) $pressable_id ) : null,
+			'pressable' => $pressable_id ? Pressable_Connection_Helper::get_ssh_connection( $pressable_id ) : null,
 			default     => null,
 		};
 	}
