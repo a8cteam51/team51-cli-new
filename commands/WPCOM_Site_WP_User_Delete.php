@@ -319,8 +319,14 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 		);
 		$users                = &$this->users;
 		$ssh_users            = &$this->ssh_users;
+		$user_count           = 0;
 
-		return Parallel_Process::create( $output, $site_ids_with_errors )
+		$progress_bar = new ProgressBar( $output, count( $site_ids_with_errors ) );
+		$progress_bar->setFormat( '(%current%/%max%) [%bar%] %percent:3s%% • %message%' );
+		$progress_bar->setMessage( 'Initializing...' );
+		$progress_bar->start();
+
+		$failed_tasks = Parallel_Process::create( $output, $site_ids_with_errors )
 			->configure(
 				array(
 					'max_processes' => 5,
@@ -381,20 +387,20 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 				'process_complete',
 				static function (
 					int $site_id,
-					int $completed,
-					int $task_count,
-					mixed $result
+					mixed $result,
+					int $failed_count,
 				) use (
-					$output,
 					$sites_index,
 					&$users,
-					&$ssh_users
+					&$ssh_users,
+					&$progress_bar,
+					&$user_count
 				): void {
-					$site_url     = $sites_index[ $site_id ]->URL;
-					$result_code  = $result['code'] ?? null;
-					$result_error = $result['error'] ?? null;
+					$site_url    = $sites_index[ $site_id ]->URL;
+					$result_code = $result['code'] ?? null;
 
 					if ( 'user_found' === $result_code ) {
+						++$user_count;
 						$users[ $site_id ]     = array(
 							(object) array(
 								'ID'       => (int) $result['details']->ID,
@@ -408,27 +414,22 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 						);
 					}
 
-					$progress_percentage = intval( round( ( $completed / $task_count ) * 100 ) );
-					$status_icon         = $result_error ? '❌' : '✅';
-					$user_status         = 'user_found' === $result_code ? '🔎 User found' : '😭 User not found';
-
-					$output->writeln(
+					$progress_bar->setMessage(
 						sprintf(
-							'🔄 Progress: %d%% (%d/%d) / Site ID: %s / Status: %s [[%s]]' . PHP_EOL . '[[%s - [%s] - [%s]]]' . PHP_EOL . PHP_EOL . '--------------------------------' . PHP_EOL,
-							$progress_percentage,
-							$completed,
-							$task_count,
-							$site_id,
-							$status_icon,
-							$sites_index[ $site_id ]->URL,
-							$user_status,
-							$result_code,
-							$result_error,
+							'<fg=red>Errors: %d</fg=red> • <fg=green>Found: %d</fg=green>',
+							$failed_count,
+							$user_count,
 						)
 					);
+
+					$progress_bar->advance();
 				}
 			)
 			->process_tasks();
+
+		$progress_bar->finish();
+
+		return $failed_tasks;
 	}
 
 	/**
