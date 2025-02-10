@@ -120,7 +120,11 @@ class SSH_Worker extends Command {
 				json_encode(
 					array(
 						'error'   => 'missing_required_param',
-						'details' => sprintf( 'Required: site-id: %s, shell-command: %s', $this->site_id, $this->shell_command ),
+						'details' => sprintf(
+							'Required: site-id: %s, shell-command: %s',
+							$this->site_id,
+							$this->shell_command
+						),
 					)
 				)
 			);

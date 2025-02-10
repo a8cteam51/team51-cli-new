@@ -13,7 +13,7 @@ use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
 
 use WPCOMSpecialProjects\CLI\Helper\{
-	AutocompleteTrait, 
+	AutocompleteTrait,
 	Parallel_Process
 };
 
@@ -25,6 +25,7 @@ use WPCOMSpecialProjects\CLI\Helper\{
 #[AsCommand( name: 'wpcom:delete-site-wp-user' )]
 final class WPCOM_Site_WP_User_Delete extends Command {
 	use AutocompleteTrait;
+
 	// region FIELDS AND CONSTANTS
 
 	/**
@@ -129,7 +130,7 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 			$output->writeln( "<comment>There are $number_of_errors sites that could NOT be searched.</comment>" );
 			$output->writeln( '<fg=magenta;options=bold>Trying to connect to those sites using SSH.</>' );
 
-			$errors = $this->get_user_using_ssh( $output, $errors, $sites );
+			$errors = $this->get_users_using_ssh( $output, $errors, $sites );
 		}
 
 		maybe_output_wpcom_failed_sites_table( $output, $errors, $sites, 'Sites that could NOT be searched' );
@@ -265,6 +266,8 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 	 * @param   InputInterface  $input  The input object.
 	 * @param   OutputInterface $output The output object.
 	 *
+	 * @throws \RuntimeException If the email address is invalid.
+	 *
 	 * @return  string|null
 	 */
 	private function prompt_email_input( InputInterface $input, OutputInterface $output ): ?string {
@@ -296,103 +299,135 @@ final class WPCOM_Site_WP_User_Delete extends Command {
 		return $this->getHelper( 'question' )->ask( $input, $output, $question );
 	}
 
-	private function get_user_using_ssh(OutputInterface $output, array $sites_with_errors, array $sites): array {
-		$email        			= $this->email;
-		$sites_by_id 			= array_column( $sites, null, 'ID' );
-		// @TODO Remove once dev is over.
-		$site_ids_with_errors   = array_filter(array_keys($sites_with_errors), function ($id) use ($sites_by_id){
-			return str_contains($sites_by_id[$id]->URL, 'mystagingwebsite.com');
-		});
-		$sites_index = array_filter(array_column( $sites, null, 'ID' ), function($site) use ($site_ids_with_errors) {
-			return in_array($site->ID, $site_ids_with_errors);
-		});
-		$users = &$this->users;
-		$ssh_users = &$this->ssh_users;
+	/**
+	 * Get the user using SSH.
+	 *
+	 * @param   OutputInterface $output The output interface.
+	 * @param   array           $sites_with_errors The sites with errors.
+	 * @param   array           $sites The sites.
+	 *
+	 * @return  array
+	 */
+	private function get_users_using_ssh( OutputInterface $output, array $sites_with_errors, array $sites ): array {
+		$email                = $this->email;
+		$site_ids_with_errors = array_keys( $sites_with_errors );
+		$sites_index          = array_filter(
+			array_column( $sites, null, 'ID' ),
+			function ( $site ) use ( $site_ids_with_errors ) {
+				return in_array( $site->ID, $site_ids_with_errors, true );
+			}
+		);
+		$users                = &$this->users;
+		$ssh_users            = &$this->ssh_users;
 
-		return Parallel_Process::create($output, $site_ids_with_errors)
-			->configure([
-				'max_processes' => 5,
-				'max_threads'   => 20,
-				'ssh_timeout'   => $this->ssh_timeout
-			])
-			->add_callback('shell_command', static function() use ($email): string {
-				return sprintf(
-					'wp user get %s --fields=ID,email --format=json',
-					escapeshellarg($email)
-				);
-			})
-			->add_callback('command_args', static function(int $site_id) use ($sites_index): string {
-				$site = $sites_index[$site_id];
-				return sprintf(
-					'--site-id=%s --site-type=%s --site-url=%s', 
-					escapeshellarg($site_id),
-					$site->is_wpcom_atomic ? 'wpcom' : 'pressable',
-					escapeshellarg($site->URL)
-				);
-			})
-			->add_callback('parse_result', static function(array $result) use ($sites_index, $output): array {
-				$site_url = $sites_index[$result['site_id']]->URL;
-				// Test for invalid users.
-				if (isset($result['details']) && str_contains($result['details'], 'Error: Invalid user')) {
-					return [
-						'code'    => 'user_not_found',
-						'site_id' => $result['site_id'],
-						'details' => sprintf('User not found on %s', $site_url)
-					];
+		return Parallel_Process::create( $output, $site_ids_with_errors )
+			->configure(
+				array(
+					'max_processes' => 5,
+					'max_threads'   => 20,
+					'ssh_timeout'   => $this->ssh_timeout,
+				)
+			)
+			->add_callback(
+				'shell_command',
+				static function () use ( $email ): string {
+					return sprintf(
+						'wp user get %s --fields=ID,email --format=json',
+						escapeshellarg( $email )
+					);
 				}
-				// Test for valid users.
-				if (isset($result['code']) && $result['code'] === 'success') {
-					return [
-						'code'              => 'user_found',
-						'site_id'           => $result['site_id'],
-						'details'           => $result['data'],
-						'type'              => $result['type'],
-						'pressable_site_id' => $result['pressable_site_id']
-					];
+			)
+			->add_callback(
+				'command_args',
+				static function ( int $site_id ) use ( $sites_index ): string {
+					$site = $sites_index[ $site_id ];
+					return sprintf(
+						'--site-id=%s --site-type=%s --site-url=%s',
+						escapeshellarg( $site_id ),
+						$site->is_wpcom_atomic ? 'wpcom' : 'pressable',
+						escapeshellarg( $site->URL )
+					);
 				}
-				return $result;
-			})
-			->add_callback('process_complete', static function(
-				int $site_id,
-				int $completed,
-				int $task_count,
-				mixed $result
-			) use ($output, $sites_index, &$users, &$ssh_users): void {
-				$site_url     = $sites_index[ $site_id ]->URL;
-				$result_code  = $result['code'] ?? null;
-				$result_error = $result['error'] ?? null;
+			)
+			->add_callback(
+				'parse_result',
+				static function ( array $result ) use ( $sites_index ): array {
+					$site_url = $sites_index[ $result['site_id'] ]->URL;
 
-				if ( $result_code === 'user_found' ) {
-					$users[ $site_id ] = [
-						(object) [
-							'ID'       => $result[ 'details' ]['ID'],
-							'site_ID'  => $site_id,
-							'site_URL' => $site_url,
-						]
-					];
-					$ssh_users[ $site_id ] = [
-						'type' => $result['type'],
-						'id'   => 'pressable' === $result['type'] ? $result['pressable_site_id'] : $result['site_id']
-					];
+					// Test for invalid users.
+					if ( isset( $result['details'] ) && str_contains( $result['details'], 'Error: Invalid user' ) ) {
+						return array(
+							'code'              => 'user_not_found',
+							'site_id'           => $result['site_id'],
+							'details'           => sprintf( 'User not found on %s', $site_url ),
+							'type'              => $result['type'],
+							'pressable_site_id' => $result['pressable_site_id'],
+						);
+					}
+					// Test for valid users.
+					if ( isset( $result['code'] ) && 'success' === $result['code'] ) {
+						return array(
+							'code'              => 'user_found',
+							'site_id'           => $result['site_id'],
+							'details'           => (object) $result['data'],
+							'type'              => $result['type'],
+							'pressable_site_id' => $result['pressable_site_id'],
+						);
+					}
+					return $result;
 				}
+			)
+			->add_callback(
+				'process_complete',
+				static function (
+					int $site_id,
+					int $completed,
+					int $task_count,
+					mixed $result
+				) use (
+					$output,
+					$sites_index,
+					&$users,
+					&$ssh_users
+				): void {
+					$site_url     = $sites_index[ $site_id ]->URL;
+					$result_code  = $result['code'] ?? null;
+					$result_error = $result['error'] ?? null;
 
-				$progress_percentage = intval(round(($completed / $task_count) * 100));
-				$status_icon         = $result_error ? '❌' : '✅';
-				$user_status         = $result_code === 'user_found' ? '🔎 User found' : '😭 User not found';
+					if ( 'user_found' === $result_code ) {
+						$users[ $site_id ]     = array(
+							(object) array(
+								'ID'       => (int) $result['details']->ID,
+								'site_ID'  => $site_id,
+								'site_URL' => $site_url,
+							),
+						);
+						$ssh_users[ $site_id ] = array(
+							'type' => $result['type'],
+							'id'   => 'pressable' === $result['type'] ? $result['pressable_site_id'] : $result['site_id'],
+						);
+					}
 
-				$output->writeln(sprintf(
-					'🔄 Progress: %d%% (%d/%d) / Site ID: %s / Status: %s [[%s]]' . PHP_EOL . '[[%s - [%s] - [%s]]]' . PHP_EOL . PHP_EOL . '--------------------------------' . PHP_EOL,
-					$progress_percentage,
-					$completed,
-					$task_count,
-					$site_id,
-					$status_icon,
-					$sites_index[$site_id]->URL,
-					$user_status,
-					$result_code,
-					$result_error,
-				));
-			})
+					$progress_percentage = intval( round( ( $completed / $task_count ) * 100 ) );
+					$status_icon         = $result_error ? '❌' : '✅';
+					$user_status         = 'user_found' === $result_code ? '🔎 User found' : '😭 User not found';
+
+					$output->writeln(
+						sprintf(
+							'🔄 Progress: %d%% (%d/%d) / Site ID: %s / Status: %s [[%s]]' . PHP_EOL . '[[%s - [%s] - [%s]]]' . PHP_EOL . PHP_EOL . '--------------------------------' . PHP_EOL,
+							$progress_percentage,
+							$completed,
+							$task_count,
+							$site_id,
+							$status_icon,
+							$sites_index[ $site_id ]->URL,
+							$user_status,
+							$result_code,
+							$result_error,
+						)
+					);
+				}
+			)
 			->process_tasks();
 	}
 

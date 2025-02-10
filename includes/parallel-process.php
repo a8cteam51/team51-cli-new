@@ -11,7 +11,6 @@ declare(strict_types=1);
 
 namespace WPCOMSpecialProjects\CLI\Helper;
 
-use parallel\Runtime as Parallel_Runtime;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Process\Process;
 
@@ -130,13 +129,13 @@ class Parallel_Process {
 	 * Runs a registered callback.
 	 *
 	 * @param string $name   Callback name.
-	 * @param bool   $return Whether to return the callback result.
+	 * @param bool   $is_returnable Whether to return the callback result.
 	 * @param mixed  ...$args Callback arguments.
 	 * @return mixed
 	 */
-	protected function run_callback( string $name, bool $return, ...$args ): mixed {
+	protected function run_callback( string $name, bool $is_returnable, ...$args ): mixed {
 		if ( is_callable( $this->callbacks[ $name ] ) ) {
-			if ( $return ) {
+			if ( $is_returnable ) {
 				return ( $this->callbacks[ $name ] )( ...$args );
 			}
 			( $this->callbacks[ $name ] )( ...$args );
@@ -275,13 +274,7 @@ class Parallel_Process {
 					$task_failures[ $index ] = (object) array(
 						'error'  => $result['error'] ?? 'SSH connection failed',
 						'id'     => $result['id'] ?? $index,
-						'errors' => array(
-							sprintf(
-								'%s: %s',
-								$result['error'] ?? 'SSH connection failed',
-								$result['details'] ?? 'No details available'
-							),
-						),
+						'errors' => $result['details'] ?? 'No details available',
 					);
 				}
 
