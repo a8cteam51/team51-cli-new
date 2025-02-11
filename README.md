@@ -96,3 +96,7 @@ A particular case where this might be needed is when using the `remove-user` com
 This is likely because you don't have PHP installed on your system. If you recently updated to MacOS Monterey, that could be the culprit as it doesn't come bundled with PHP anymore. If you have `brew` installed, it's easy to get PHP added by running the following command in the terminal: `brew install php@8.2 brew-php-switcher`. This will install the latest version of PHP 8.2 as well as a handy utility for switching between PHP versions if you need to.
 
 You will then need to run `brew link php@8.2` so that PHP gets symlinked properly to your system's PHP files. Running `team51` now should work just fine.
+
+### `git@github.com: Permission denied (publickey)`
+
+This is likely to happen if you moved/migrated from another computer and the key you used to authenticate with GitHub is not working anymore. This [guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent) should help you set up a new SSH key. 
